@@ -81,7 +81,7 @@ Policy version: {{POLICY_VERSION}}
 Apply the exact supplied version. Link: {link}
 
 ### JSON example
-
+```json
 {
   "level": "A1",
   "goal_scope": "Help prepare a programming assignment",
@@ -103,6 +103,7 @@ Apply the exact supplied version. Link: {link}
     "Personal data"
   ]
 }
+```
 
 ## A2 — Supervised agent
 
