@@ -4,7 +4,7 @@ import type { Person } from "../lib/split";
 
 // Closing or backgrounding a bill stops its heartbeat. Separate presence requests
 // never increment the bill revision or invalidate the organiser's Undo.
-export function ActivePeople({ id, token, me, people }: { id: string; token: string; me: string; people: Person[] }) {
+export function ActivePeople({ id, token, me, people, colors }: { id: string; token: string; me: string; people: Person[]; colors: Record<string,string> }) {
   const [active, setActive] = useState<string[] | null>(null);
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
@@ -40,7 +40,7 @@ export function ActivePeople({ id, token, me, people }: { id: string; token: str
     <strong><i className={active ? "online" : ""} aria-hidden="true"/>{active ? "Active now · " + online.length : "Connecting to the table…"}</strong>
     <span className="avatar-stack">{online.slice(0,5).map(p=>{
       const label=p.name+(p.id===me?" (you)":"");
-      return <span className={"active-avatar a"+(parseInt(p.id.slice(0,2),16)%3)} key={p.id} aria-label={label} title={label}>
+      return <span className="active-avatar" style={{backgroundColor:colors[p.id],color:"white"}} key={p.id} aria-label={label} title={label}>
         {p.name.trim().split(/\s+/).slice(0,2).map(s=>Array.from(s)[0]).join("").toUpperCase()}</span>;
     })}{online.length>5 && <span className="active-avatar">+{online.length-5}</span>}</span>
     </summary>{online.length>0 && <p>{online.map(p=>p.name+(p.id===me?" (you)":"")).join(", ")}</p>}</details>;

@@ -1,10 +1,11 @@
 "use client";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { GripVertical, MoreHorizontal, Plus, QrCode, Undo2, X } from "lucide-react";
 import { available, sum, type BillRoom, type Pattern, type Selection, type Group } from "../lib/bill";
 import { money, parseCents, type Item, type Room } from "../lib/split";
 import { ActivePeople } from "./active-people";
+import { ItemProgress, paidHistory, seatColor } from "./item-progress";
 import { PaidItems } from "./paid-items";
 import { DragTray, useGroupDrag } from "./group-drag";
 import "./live-bill.css";
@@ -66,6 +67,9 @@ export function LiveBill({room,me,id,revision,busy,act:send,token,error}:{
   room:BillRoom; me:string; id:string; revision:number; busy:boolean; act:Action; token:string; error:string;
 }) {
   const board=room.board, host=room.host===me, mine=board.picks[me] ?? {};
+  const history = useMemo(()=>paidHistory(room),[room]);
+  const colors = useMemo(()=>Object.fromEntries(room.people.map((p,index)=>[p.id,seatColor(index,id)])),[room.people,id]);
+  const progress = (item:Item) => <ItemProgress room={room} item={item} colors={colors} history={history}/>;
   const act:Action=cmd=>send({generation:board.generation??0,...cmd});
   // A settled row already on screen keeps its slot. On the next visit it lives
   // only under Paid items. Editable reservations never reorder the receipt.
@@ -96,7 +100,11 @@ export function LiveBill({room,me,id,revision,busy,act:send,token,error}:{
   const openGroups=board.groups.filter(g=>!g.paidBy);
   const target=openGroups.find(g=>g.id===destination);
   const picking=assigning ? target?.items ?? draft : mine;
+  const canSelectAll = room.items.some(i => available(i,board) > (assigning && !target ? draft[i.id] || 0 : 0));
   const payer=room.people.find(p=>p.id===room.host)?.name || "the organiser";
+  const total=room.items.reduce((n,i)=>n+i.cents,0);
+  const covered=sum(board.picks[room.host]??{})+sum(board.paid);
+  const groupsSection=useRef<HTMLElement>(null);
   const item=room.items.find(i=>i.id===active);
   const link=typeof window==="undefined"?"":window.location.href.split("#")[0];
   const last=board.payments.at(-1);
@@ -188,11 +196,14 @@ export function LiveBill({room,me,id,revision,busy,act:send,token,error}:{
       {!host && <button disabled={busy} onClick={()=>confirmChange("resetMine")}>Reset my activity</button>}
     </div></details><button className="copy-bill" onClick={()=>setSheet("share")}><QrCode size={18}/>Share QR</button></div>
     <div className="bill-heading"><h1>{room.title}</h1><b>{amount(room.items.reduce((n,i)=>n+i.cents,0))}</b></div>
-    <ActivePeople id={id} token={token} me={me} people={room.people}/>
+    <ActivePeople id={id} token={token} me={me} people={room.people} colors={colors}/>
+    <div className="bill-progress"><label htmlFor="bill-covered">Bill covered <b>{amount(covered)} / {amount(total)}</b></label>
+      <progress id="bill-covered" value={covered} max={total}/>
+      <small>{covered===total?"All shares covered":amount(total-covered)+" left"} · Includes the organiser’s share and completed payments</small></div>
     {host ? <div className="bill-modes" role="group" aria-label="Manage the receipt">
       <button aria-pressed={assigning} onClick={()=>{setLane("groups");setNotice("");}}>Assign to groups</button>
       <button aria-pressed={!assigning} onClick={()=>{setLane("mine");setNotice("");}}>My items · already paid</button>
-    </div> : <a className="group-shortcut" href="#payment-groups">View groups ↓</a>}
+    </div> : <button type="button" className="group-shortcut" onClick={()=>{groupsSection.current?.focus({preventScroll:true});groupsSection.current?.scrollIntoView({block:"start"});}}>View groups ↓</button>}
     <section ref={lines} className="receipt-lines"><h2>Bill items</h2>
       {assigning ? <>
         <p>Groups pay you back. Choose a group and use + to add what they had, or drag a receipt item by its grip.</p>
@@ -201,7 +212,7 @@ export function LiveBill({room,me,id,revision,busy,act:send,token,error}:{
         </select></label><button type="button" className="minor" disabled={busy} onClick={()=>newGroup()}><Plus size={16}/> New group</button></div>
         <p>{target ? "Editing "+target.name+" · "+amount(sum(target.items)) : "Use + to choose several items, then assign them together or split them equally."}</p>
       </> : <p>{host?"You already paid the restaurant. Mark only what you had.":"Choose what you had."} Tap or hold an item for a percentage or an equal split.</p>}
-      <div className="batch-actions"><button disabled={busy} onClick={()=>batch(true)}>Select all</button><button disabled={busy||!sum(picking)} onClick={()=>batch(false)}>Clear all</button></div>
+      <div className="batch-actions"><button disabled={busy || !canSelectAll} onClick={()=>batch(true)}>Select all</button><button disabled={busy||!sum(picking)} onClick={()=>batch(false)}>Clear all</button></div>
       {room.items.map(i=>{
         const own=board.picks[room.host]?.[i.id]||0, paid=board.paid[i.id]||0;
         if(!host && own===i.cents)return null;
@@ -209,14 +220,14 @@ export function LiveBill({room,me,id,revision,busy,act:send,token,error}:{
         if(settled && archivedOnEntry.has(i.id))return null;
         const stock=available(i,board), picked=picking[i.id]||0;
         const left=assigning && !target ? Math.max(0,stock-picked):stock;
-        return <BillLine key={i.id} item={i} mine={picked} left={left} cap={stock+(assigning&&!target?0:picked)} paid={paid} settled={settled} showPayers={()=>{
+        return <div className="item-with-progress" key={i.id}><BillLine item={i} mine={picked} left={left} cap={stock+(assigning&&!target?0:picked)} paid={paid} settled={settled} showPayers={()=>{
           const line=document.getElementById("payers-"+i.id) as HTMLDetailsElement|null, panel=line?.parentElement?.closest("details");
           if(line && panel){panel.open=true;line.open=true;line.scrollIntoView({block:"center"});line.querySelector("summary")?.focus({preventScroll:true});}
         }} busy={busy} amount={amount} quantityFor={assigning?target?.name||"Group selection":"Your"}
           grip={assigning && <button type="button" className="group-grip" aria-label={"Assign "+i.name+" to a group"} title="Drag or tap to assign"
             disabled={busy || (stock<=0 && (!!target || !draft[i.id]))} onContextMenu={e=>e.preventDefault()}
             onPointerDown={e=>drag.begin(e,payload(i))} onClick={()=>{if(drag.tapped()){setPending(payload(i).items);setSheet("destinations");}}}><GripVertical size={19}/></button>}
-          open={()=>openItem(i)} select={cents=>adjust(i,cents)}/>;
+          open={()=>openItem(i)} select={cents=>adjust(i,cents)}/>{progress(i)}</div>;
       })}
       {room.items.every(i=>(board.paid[i.id] || 0) + (board.picks[room.host]?.[i.id] || 0) === i.cents) && <p>All shares are covered.</p>}
     </section>
@@ -231,7 +242,7 @@ export function LiveBill({room,me,id,revision,busy,act:send,token,error}:{
       {selected.length===0 && <p>Use + beside an item to add it.</p>}
       {selected.map(i=><div className="pick-row" key={i.id}><button onClick={()=>openItem(i)}>{i.name}</button><b>{amount(mine[i.id])}</b></div>)}</section>}
     {host && notice && <p className="bill-feedback" role="status">{notice}</p>}
-    <section id="payment-groups"><div className="bill-section-title"><h2>Groups</h2>{host && <button disabled={busy || board.undo?.actor!==me || board.undo.revision!==revision} onClick={async()=>{if(await submit({action:"undo"}))setNotice("Group edit undone.");}}><Undo2 size={15}/> Undo</button>}</div>
+    <section id="payment-groups" ref={groupsSection} tabIndex={-1} aria-label="Groups"><div className="bill-section-title"><h2>Groups</h2>{host && <button disabled={busy || board.undo?.actor!==me || board.undo.revision!==revision} onClick={async()=>{if(await submit({action:"undo"}))setNotice("Group edit undone.");}}><Undo2 size={15}/> Undo</button>}</div>
       <p>{host?"Give each group the items they owe you for.":"Someone from each group can pay its total to "+payer+"."}</p>
       {host && <button disabled={busy} className={"new-group "+(drag.over==="new"?"over":"")} data-group-drop="new" onClick={()=>newGroup()}><Plus/> New group</button>}
       {board.groups.map(g=><div className={"bill-group "+(drag.over===g.id?"over":"")} key={g.id} data-group-drop={host&&!g.paidBy?g.id:undefined}>
@@ -246,7 +257,7 @@ export function LiveBill({room,me,id,revision,busy,act:send,token,error}:{
       </div>)}
       {!host && !board.groups.length && <p>No groups yet. You can choose your own items above.</p>}
     </section>
-    <PaidItems room={room} amount={amount}/>
+    <PaidItems room={room} amount={amount} history={history} progress={progress}/>
     {!assigning && <section><h2>Reuse a selection</h2>{!last && !patterns.length && <p>Paid selections will appear here.</p>}
       {last && <button className="template" disabled={busy} onClick={()=>submit({action:"applyPattern",pattern:last.pattern})}><strong>Last Payment</strong><small>{last.pattern.map(p=>p.name).join(" + ")}</small></button>}
       {patterns.map((s,index)=><button key={index} className="template" disabled={busy} onClick={()=>submit({action:"applyPattern",pattern:s.pattern})}><strong>{s.pattern.map(p=>p.name).join(" + ")}</strong><small>{s.times}× used · {Math.round(s.match*100)}% match</small></button>)}
