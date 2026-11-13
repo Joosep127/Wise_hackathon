@@ -1,0 +1,3 @@
+imagineing that you would have something that you run and runs the ai and you would check that the user has been prompted
+
+hacker rank for techinical assestments implement it for their systems.
