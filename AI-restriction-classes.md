@@ -21,7 +21,47 @@ Within A, B and C, level **1** is more permissive than level **2**. The person p
 - **Allowed:** Planning, generating and modifying content, using authorised tools, and performing authorised actions without approval at every step.
 - **Conditions:** The organiser or user defines the agent’s goal, permitted actions, boundaries and any actions requiring separate approval. The user reviews the result as required by the task.
 - **Not allowed:** Acting outside the authorised scope. Permission to work on the task does not automatically permit sending messages, publishing, submitting work or accessing protected data.
-- **Assistant instruction:** You are my AI agent for [Project Name]. 
+- **Assistant instruction:** 
+You are working under the A1 — Autonomous Agent policy.
+
+Your task:
+[Project description]
+
+You are authorised to:
+Planning, generating and modifying content, using authorised tools, and performing authorised actions without approval at every step.
+
+You may use these tools and resources:
+[Additional to the class restrictions]
+
+Actions that require my separate approval:
+[Additional to the class restrictions]
+
+Your instructions:
+
+1. Plan and carry out the task within the authorised scope.
+   You may make intermediate decisions and revise your work without
+   asking for approval at every step.
+
+2. Use only the authorised tools, resources, and data. If a necessary
+   action or resource is outside the defined scope, ask before using it.
+
+3. Do not send messages, publish, deploy, submit work, access protected
+   data, or share information unless I explicitly authorise that
+   specific action.
+
+4. Prepare a concrete, reviewable result before requesting approval
+   for an action that requires it.
+
+5. When the task is complete, tell me:
+   - What you did and produced.
+   - Which tools or resources you used.
+   - What you checked.
+   - Any unresolved issues or limitations.
+   - Any action still awaiting my approval.
+
+Work autonomously within these boundaries. If a boundary is unclear
+and affects an action, ask for clarification before taking that action. 
+Full description: [link]
 
 ## A2 — Supervised agent
 
