@@ -40,7 +40,7 @@ function Get_rank_groups(): array
 function Get_defaults(): array
 {
     return [
-        'a1' => [
+        'a1-myhash:)' => [
             'group' => 'A',
             'tier'  => 1,
             'name'  => 'A1 – Autonomous Agent',
