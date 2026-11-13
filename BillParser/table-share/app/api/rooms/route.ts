@@ -1,6 +1,7 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, gt, sql } from "drizzle-orm";
+import { combineItems, suggestions, updateBill, type BillAction, type BillRoom, type Pattern } from "../../../lib/bill";
 import { getDb } from "../../../db";
-import { rooms } from "../../../db/schema";
+import { presence, rooms } from "../../../db/schema";
 import { categories, countsUnits, currencies, parseCents, receiptQuantity, remainingUnits, totals, type Room, type Draft } from "../../../lib/split";
 
 class InputError extends Error {
@@ -35,7 +36,8 @@ async function read(id: string) {
   }
   return { room, revision: row.revision };
 }
-type Command = {
+type Command = BillAction & {
+  liveBill?: boolean;
   action: string; name?: string; title?: string; currency?: string; items?: Draft[]; picks?: (boolean | number)[];
   item?: string; weights?: Record<string, number>; include?: boolean; category?: string;
   everyone?: boolean; revision?: number; units?: number; sharedPortions?: boolean;
@@ -49,6 +51,11 @@ function change(room: Room, actor: string, cmd: Command, revision: number) {
     return;
   }
   check(member, "Join this table first.", 403);
+  if (room.board) {
+    try { updateBill(room as BillRoom, actor, cmd, revision); }
+    catch (err) { throw new InputError(err instanceof Error ? err.message : "Unable to change bill.", 409); }
+    return;
+  }
   if (cmd.action === "pay") {
     check(room.locked && actor !== room.host, "Checkout is unavailable.");
     member.paid = true;
@@ -109,7 +116,19 @@ function fail(error: unknown) {
 export async function GET(req: Request) {
   try {
     const id = new URL(req.url).searchParams.get("id") || "";
-    return reply({ ...(await read(id)), id, me: await identity(req) });
+    const data = await read(id);
+    const me = await identity(req);
+    if (new URL(req.url).searchParams.has("suggestions")) {
+      check(data.room.people.some(p => p.id === me), "Join the bill first.", 403);
+      // Share only anonymous item combinations from this organiser's bills.
+      const history = await getDb().all<{pattern:string}>(sql`
+        SELECT json_extract(p.value, '$.pattern') AS pattern
+        FROM split_rooms r, json_each(r.body, '$.board.payments') p
+        WHERE json_extract(r.body,'$.host') = ${data.room.host}
+        ORDER BY r.rowid DESC, CAST(p.key AS INTEGER) DESC LIMIT 500`);
+      return reply(suggestions(history.map(h => JSON.parse(h.pattern) as Pattern), data.room));
+    }
+    return reply({ ...data, id, me });
   } catch (e) { return fail(e); }
 }
 export async function POST(req: Request) {
@@ -139,16 +158,42 @@ export async function POST(req: Request) {
         }),
       };
       const id = crypto.randomUUID();
+      if (cmd.liveBill) {
+        room.items = combineItems(room.items);
+        room.board = { picks: {}, groups: [], payments: [], paid: {} };
+      }
       await getDb().insert(rooms).values({ id, revision: 0, body: JSON.stringify(room) });
       return reply({ room, id, me: actor, revision: 0 }, 201);
     }
     const id = new URL(req.url).searchParams.get("id") || "";
-    for (let i = 0; i < 6; i++) {
+    if (cmd.action === "presence") {
+      const { room } = await read(id);
+      check(room.people.some(p => p.id === actor), "Join the table first.", 403);
+      const db = getDb();
+      const now = sql<number>`unixepoch()`;
+      const [, active] = await db.batch([
+        db.insert(presence).values({ roomId: id, personId: actor, lastSeen: now })
+          .onConflictDoUpdate({ target: [presence.roomId, presence.personId], set: { lastSeen: now } }),
+        db.select({ id: presence.personId }).from(presence)
+          .where(and(eq(presence.roomId, id), gt(presence.lastSeen, sql`unixepoch() - 30`))),
+      ]);
+      return reply({ active: active.map(p => p.id) });
+    }
+    for (let i = 0; i < 20; i++) {
       const { room, revision } = await read(id);
+      if (cmd.action === "deleteTable") {
+        check(room.board && actor === room.host, "Only the organiser can delete the table.", 403);
+        check(cmd.revision === revision, "The bill changed. Review it before deleting.", 409);
+        const deleted = await getDb().delete(rooms).where(and(eq(rooms.id, id), eq(rooms.revision, revision))).returning({ id: rooms.id });
+        check(deleted.length, "The bill changed. Review it before deleting.", 409);
+        return reply({ deleted: true, id });
+      }
       change(room, actor, cmd, revision);
       const updated = await getDb().update(rooms).set({ body: JSON.stringify(room), revision: revision + 1 })
         .where(and(eq(rooms.id, id), eq(rooms.revision, revision))).returning({ id: rooms.id });
       if (updated.length) return reply({ room, id, revision: revision + 1, me: actor });
+      // Spread out a burst of concurrent phones so they don't all retry the same revision.
+      await new Promise(resolve => setTimeout(resolve, 2 + Math.random() * Math.min(45, (i + 1) * 6)));
     }
     throw new InputError("The table is busy. Try again.", 409);
   } catch (e) { return fail(e); }

@@ -2,10 +2,14 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, ArrowUpRight, Camera, Check, ChevronLeft, CirclePlus, ClipboardList, Copy, LoaderCircle, LockKeyhole, Plus, QrCode, ReceiptText, Settings2, Share2, Trash2, Users, Utensils, Wallet, Wine, X } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
+import { LiveBill } from "../components/live-bill";
+import type { BillRoom } from "../lib/bill";
 import { createReceiptScanner, prepareReceiptPhoto } from "../lib/receipt-scanner";
 import { allocation, categories, countsUnits, currencies, money, parseCents, parseReceipt, remainingUnits, sample, totals, type Category, type Draft, type Item, type Room } from "../lib/split";
 
 type Snapshot = { id: string; me: string; revision: number; room: Room };
+type Deleted = { id: string; deleted: true };
+class TableUnavailable extends Error {}
 type Saved = { id: string; title: string };
 type Screen = "home" | "review" | "table";
 const emptyRow = (): Draft => ({ name: "", amount: "", quantity: 1, category: "Food" });
@@ -27,13 +31,14 @@ function sessionKey(id: string) {
   }
   return token;
 }
-async function request(id: string, token: string, cmd?: object): Promise<Snapshot> {
+async function request(id: string, token: string, cmd?: object): Promise<Snapshot | Deleted> {
   const response = await fetch("/api/rooms?id=" + encodeURIComponent(id), {
     method: cmd ? "POST" : "GET", cache: "no-store",
     headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
     body: cmd ? JSON.stringify(cmd) : undefined,
   });
-  const data = await response.json() as Snapshot & { error?: string };
+  const data = await response.json() as (Snapshot | Deleted) & { error?: string };
+  if (response.status === 404) throw new TableUnavailable("This table was deleted or its link is no longer available.");
   if (!response.ok) throw new Error(data.error || "Could not open the table.");
   return data;
 }
@@ -68,6 +73,7 @@ export default function Home() {
   const [share, setShare] = useState(false), [copied, setCopied] = useState(false);
   const [editor, setEditor] = useState<Item | null>(null), [weights, setWeights] = useState<Record<string, number>>({});
   const upload = useRef<HTMLInputElement>(null);
+  const camera = useRef<HTMLInputElement>(null);
   const [scanner] = useState(() => createReceiptScanner(percent => setScan("Reading receipt · " + percent + "%")));
   useEffect(() => () => scanner.release(), [scanner]);
   const dialog = useRef<HTMLDialogElement>(null);
@@ -89,24 +95,39 @@ export default function Home() {
     const list: Saved[] = JSON.parse(localStorage.getItem("tableshare.tables") || "[]");
     const next = [{ id: data.id, title: data.room.title }, ...list.filter(t => t.id !== data.id)].slice(0, 8);
     localStorage.setItem("tableshare.tables", JSON.stringify(next)); setSaved(next);
-    localStorage.setItem("tableshare.name", name.trim());
+    if (name.trim()) localStorage.setItem("tableshare.name", name.trim());
   }
   function accept(data: Snapshot) {
-    if (activeId.current === data.id) setSnap(prev => prev?.id === data.id && prev.revision > data.revision ? prev : data);
+    if (activeId.current === data.id) setSnap(prev => prev?.id === data.id && prev.revision >= data.revision ? prev : data);
+  }
+  function forget(id:string, message:string) {
+    const tables:Saved[]=JSON.parse(localStorage.getItem("tableshare.tables")||"[]");
+    const rest=tables.filter(t=>t.id!==id);
+    localStorage.setItem("tableshare.tables",JSON.stringify(rest));setSaved(rest);
+    if(activeId.current===id){navigate("home");setError(message);}
   }
   useEffect(() => {
     if (!id) return;
     let running = true;
+    let loading = false;
     let timeout: ReturnType<typeof setTimeout>;
     async function refresh() {
+      clearTimeout(timeout);
+      if (!running || loading || document.hidden) return;
+      loading = true;
       try {
         const next = await request(id, sessionKey(id));
-        if (running) { accept(next); setOffline(false); }
-      } catch (e) { if (running) { setOffline(true); setError(errorText(e)); } }
-      if (running) timeout = setTimeout(refresh, 1000);
+        if (running && !("deleted" in next)) { accept(next); setOffline(false); }
+      } catch (e) { if (running) {
+        if(e instanceof TableUnavailable) { forget(id,e.message); return; }
+        setOffline(true); setError(errorText(e));
+      } }
+      loading = false;
+      if (running && !document.hidden) timeout = setTimeout(refresh, 1000);
     }
     refresh();
-    return () => { running = false; clearTimeout(timeout); };
+    document.addEventListener("visibilitychange", refresh);
+    return () => { running = false; clearTimeout(timeout); document.removeEventListener("visibilitychange", refresh); };
   }, [id]);
   useEffect(() => {
     if (share || editor) dialog.current?.showModal();
@@ -116,12 +137,12 @@ export default function Home() {
     setPicks(null);
     setRows(demo ? sample.map(i => ({ ...i })) : [emptyRow()]); setTitle(demo ? "Osteria Luna" : ""); setCurrency("EUR"); setOcrNote(""); navigate("review");
   }
-  function choosePhoto() {
+  function choosePhoto(useCamera = false) {
     if (!hostScan) {
       void scanner.acquire().catch(() => {});
       scanner.idle();
     }
-    upload.current?.click();
+    (useCamera ? camera : upload).current?.click();
   }
   async function scanPhoto(file?: File) {
     if (!file) return;
@@ -155,10 +176,17 @@ export default function Home() {
       }
       setRows(parsed.length ? parsed : [emptyRow()]);
       setPicks(parsed.length ? parsed.map(() => 0) : null);
-      setTitle(text.split(/\r?\n/).find(l => /[a-z]{3}/i.test(l))?.trim().replace(/\s+[:;](?=&)/g, " ").slice(0, 80) || "Dinner");
+      const merchant = text.split(/\r?\n/).find(l => /[a-z]{3}/i.test(l))?.trim().replace(/\s+[:;](?=&)/g, " ").slice(0, 80) || "Dinner";
+      setTitle(merchant);
       setOcrNote(parsed.length ? "Check the items and total against your receipt, including tax and service." : "No prices were recognised. Enter the receipt lines below.");
+      if (parsed.length) {
+        setPicks(null);
+        const detectedCurrency = /\bUSD\b|\$/.test(text) ? "USD" : /\bGBP\b|£/.test(text) ? "GBP" : "EUR";
+        setCurrency(detectedCurrency);
+        await act({ action:"create", liveBill:true, name:name.trim() || "Organiser", title:merchant, currency:detectedCurrency, items:parsed });
+      }
     } catch { scanner.release(); setOcrNote("The photo could not be read. Enter the items below or try another photo."); }
-    finally { setScan(""); if (upload.current) upload.current.value = ""; }
+    finally { setScan(""); if (upload.current) upload.current.value = ""; if (camera.current) camera.current.value = ""; }
   }
   async function act(cmd: { action: string; [key: string]: unknown }) {
     setBusy(true); setError("");
@@ -166,10 +194,11 @@ export default function Home() {
       const creating = cmd.action === "create";
       const token = sessionKey(creating ? "organiser" : id);
       const data = await request(id, token, cmd);
+      if ("deleted" in data) { forget(data.id,"The table has been deleted."); return data; }
       if (creating) { localStorage.setItem("tableshare.identity." + data.id, token); navigate("table", data.id); }
       if (creating || cmd.action === "join") remember(data);
-      accept(data); setEditor(null);
-    } catch (e) { setError(errorText(e)); }
+      accept(data); setEditor(null); return data;
+    } catch (e) { if (e instanceof TableUnavailable) forget(id,e.message); else setError(errorText(e)); return false; }
     finally { setBusy(false); }
   }
   function editRow(index: number, patch: Partial<Draft>) { setRows(rows.map((r, i) => i === index ? { ...r, ...patch } : r)); }
@@ -184,6 +213,7 @@ export default function Home() {
     <header><div className="shell nav"><button className="brand" disabled={!!scan || busy} onClick={() => navigate("home")}><span className="brandmark" aria-hidden="true"><i/><i/><i/><i/></span>Table Share</button>
       <button className="nav-link" disabled={!!scan || busy} onClick={() => navigate("home")}><ClipboardList size={17}/> My tables</button></div></header>
     <input hidden ref={upload} type="file" accept="image/*" onChange={e => scanPhoto(e.target.files?.[0])}/>
+    <input hidden ref={camera} type="file" accept="image/*" capture="environment" onChange={e => scanPhoto(e.target.files?.[0])}/>
     <main className="shell">
       {error && <div className="error" role="alert">{error}<button aria-label="Dismiss message" onClick={() => setError("")}><X size={16}/></button></div>}
       {screen === "home" && <>
@@ -191,9 +221,10 @@ export default function Home() {
           <div className="eyebrow"><span/> BILL SPLITTER</div>
           <h1>Split the<br/><em>table bill.</em></h1>
           <p>Scan your receipt and let everyone pick their dishes. Share a plate, a bottle, or the whole bill.</p>
-          <button className="primary hero-cta" onClick={choosePhoto}><Camera/> Scan a receipt <ArrowUpRight size={18}/></button>
+          <button className="primary hero-cta" onClick={()=>choosePhoto(true)}><Camera/> Scan a receipt <ArrowUpRight size={18}/></button>
+          <button className="text-link" onClick={()=>choosePhoto()}>Choose a receipt photo</button>
           {hostScan && <small>Photos are read on the host Mac.</small>}
-          <button className="text-link" onClick={() => review(true)}>Try a sample receipt <ArrowRight size={15}/></button>
+          <button className="text-link" disabled={busy} onClick={() => act({action:"create",liveBill:true,name:name.trim()||"Organiser",title:"Osteria Luna",currency:"EUR",items:sample})}>Try a sample receipt <ArrowRight size={15}/></button>
         </div><SampleReceipt/></div>
         <div className="section-line"><h2>My tables</h2><button className="inline" onClick={() => review(false)}><Plus size={16}/> Enter a bill manually</button></div>
         {saved.length ? <div className="saved">{saved.map(t => <button key={t.id} onClick={() => navigate("table", t.id)}><span className="soft-icon"><ReceiptText/></span><strong>{t.title}</strong><ArrowUpRight size={18}/></button>)}</div> :
@@ -202,7 +233,7 @@ export default function Home() {
       {screen === "review" && <>
         <button className="back" disabled={!!scan || busy} onClick={() => navigate("home")}><ChevronLeft/> My tables</button>
         <h1 className="page-title">Review receipt</h1>
-        {scan ? <div className="panel loading" role="status"><LoaderCircle className="spin"/>{scan}</div> : <form className="panel review" onSubmit={e => { e.preventDefault(); act({ action: "create", items: rows, currency, name, title, picks: picks ?? undefined }); }}>
+        {scan ? <div className="panel loading" role="status"><LoaderCircle className="spin"/>{scan}</div> : <form className="panel review" onSubmit={e => { e.preventDefault(); act({ action: "create", liveBill:true, items: rows, currency, name, title }); }}>
           {picks && <section className="quick-picks"><h2>Choose your items</h2><p>Tap what you had. Others can join any item when you share the table.</p>
             {rows.map((row, index) => row.quantity > 1 ? <div className="quantity-choice" key={index}><div><strong>{row.name}</strong><small>{row.quantity} ordered · {amount(parseCents(row.amount) || 0)} total</small></div>
               <QuantityPicker name={row.name} value={picks[index]} max={row.quantity} change={value => setPicks(picks.map((n, i) => i === index ? value : n))}/></div> :
@@ -213,7 +244,7 @@ export default function Home() {
           <div className="form-grid"><label>Table or restaurant<input required maxLength={80} value={title} placeholder="Friday dinner" onChange={e => setTitle(e.target.value)}/></label>
           <label>Your name · organiser<input required maxLength={32} value={name} placeholder="Your name" onChange={e => setName(e.target.value)}/></label>
           <label>Currency<select value={currency} onChange={e => setCurrency(e.target.value)}>{currencies.map(c => <option key={c}>{c}</option>)}</select></label></div>
-          <div className="section-line"><h2>Receipt items</h2><button type="button" className="inline" onClick={choosePhoto}><Camera size={16}/> Scan photo</button></div>
+          <div className="section-line"><h2>Receipt items</h2><button type="button" className="inline" onClick={()=>choosePhoto()}><Camera size={16}/> Scan photo</button></div>
           {rows.map((r, i) => <div className="draft-row" key={i}>
             <label className="draft-quantity">Qty<input aria-label={"Quantity for " + (r.name || "new item")} required type="number" min={1} max={999} step={1} value={r.quantity || ""} onChange={e => {
               const quantity = Number(e.target.value);
@@ -232,10 +263,11 @@ export default function Home() {
       </>}
       {screen === "table" && <><button className="back" onClick={() => navigate("home")} disabled={busy}><ChevronLeft/> My tables</button>
         {!snap || !room || !bill ? <div className="panel loading">{offline ? "Table unavailable" : "Opening table…"}</div> : <>
-          <div className="section-line table-heading"><div><div className="eyebrow"><span/>{room.locked ? "LOCKED SPLIT" : offline ? "RECONNECTING" : "LIVE TABLE"}</div><h1 className="page-title">{room.title}</h1></div>
-          {me && <button className="secondary" onClick={() => setShare(true)}><QrCode size={17}/> Invite</button>}</div>
+          {(!room.board || !me) && <div className="section-line table-heading"><div><div className="eyebrow"><span/>{room.locked ? "LOCKED SPLIT" : offline ? "RECONNECTING" : "LIVE TABLE"}</div><h1 className="page-title">{room.title}</h1></div>
+          {me && <button className="secondary" onClick={() => setShare(true)}><QrCode size={17}/> Share QR</button>}</div>}
           {!me ? <form className="panel join" onSubmit={e => { e.preventDefault(); act({ action: "join", name }); }}><Users/><h2>Join the table</h2><p>{room.people.find(p => p.id === room.host)?.name} covered the {amount(bill.total)} bill.</p>
             <label>Your name<input required maxLength={32} value={name} onChange={e => setName(e.target.value)}/></label><button className="primary" disabled={busy || room.locked}>{room.locked ? "Table locked" : "Join table"} <ArrowRight/></button></form> :
+          room.board ? <LiveBill key={id+":"+(room.board.generation??0)} room={room as BillRoom} id={id} me={snap.me} revision={snap.revision} busy={busy} act={act} token={sessionKey(id)} error={error}/> :
           <div className="room-grid"><section className="panel"><div className="section-line"><h2>Shared receipt</h2><b>{amount(bill.total)}</b></div>
             {categories.filter(c => room.items.some(i => i.category === c)).map(c => <section className="group" key={c}>
               <div className="section-line"><h3><CategoryIcon category={c}/>{c}</h3>{host && !room.locked && <select aria-label={c + " split rule"} disabled={busy} value={room.items.filter(i => i.category === c).every(i => i.everyone) ? "all" : room.items.filter(i => i.category === c).every(i => !i.everyone) ? "claim" : "mixed"}

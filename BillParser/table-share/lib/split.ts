@@ -6,6 +6,7 @@ export type Item = {
   sharedPortions?: boolean;
 };
 export type Room = {
+  board?: import("./bill").Board;
   title: string; currency: string; host: string; locked: boolean;
   people: Person[]; items: Item[];
 };
