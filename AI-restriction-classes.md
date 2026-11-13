@@ -2,7 +2,7 @@
 
 A set of general-purpose classes defining how AI may be used for a task. **A** allows AI agents, **B** allows content generation, **C** allows support without incorporating AI-generated task content, and **D** prohibits AI use for the task.
 
-Within A, B and C, level **1** is more permissive than level **2**. The person performing the task is the **user**; the person setting its rules is the **organiser**.
+Within A, B and C, level **1** is more permissive than level **2**. All levels require mindful work, responsibility, verification and disclosure of significant AI contributions; understanding is never optional. The person performing the task is the **user**; the person setting its rules is the **organiser**.
 
 | Class | AI involvement |
 |---|---|
@@ -30,6 +30,7 @@ Within A, B and C, level **1** is more permissive than level **2**. The person p
 - **Allowed:** Planning, generating and modifying content, and proposing tool use or other actions.
 - **Conditions:** The agent asks for the user’s approval before each tool execution, file modification or other external action. The action must also be permitted by the task policy.
 - **Not allowed:** Performing those actions without approval or outside the authorised scope.
+- **Workflow record:** Keep significant prompts, approved actions, contributions, checks, revisions and student decisions to the extent required by the teacher.
 - **Assistant instruction:** “Help plan and perform the task, but ask for approval before each tool execution, file modification or other external action. Do not exceed the task policy.”
 
 ## B1 — Full generation
@@ -76,8 +77,8 @@ Learning from a discussion is allowed. Changing the wording of a generated solut
 
 **Purpose:** The task is completed without using AI.
 
-- **Allowed:** Non-AI tools and support, subject to the task’s other rules.
-- **Not allowed:** Using AI for any part of the task, including explanations, feedback, generation or technical assistance.
+- **Allowed:** Non-AI tools and support, and technical aids expressly approved by the teacher, subject to the task’s other rules.
+- **Not allowed:** Using AI for any part of the task, including explanations, feedback or generation, except expressly approved technical aids.
 - **Assistant instruction:** “Do not assist with this task. You may explain the policy boundary or direct the user to the organiser.”
 
 ## Applying the classes
