@@ -16,7 +16,7 @@ function initializeDatabase(PDO $pdo): void
         public_code TEXT NOT NULL,
         version INTEGER NOT NULL CHECK (version >= 1),
         title TEXT NOT NULL,
-        base_mode TEXT NOT NULL CHECK (base_mode IN (\'A0\', \'A1\', \'A2\', \'A3\', \'A4\')),
+        base_mode TEXT NOT NULL CHECK (base_mode IN (\'A1\', \'A2\', \'B1\', \'B2\', \'C1\', \'C2\', \'D\')),
         restrictions_json TEXT NOT NULL,
         PRIMARY KEY (public_code, version)
     )';
@@ -42,7 +42,7 @@ function savePolicyVersion(
     if ($version < 1 || trim($title) === '') {
         throw new InvalidArgumentException('A positive version and a title are required.');
     }
-    if (!in_array($baseMode, ['A0', 'A1', 'A2', 'A3', 'A4'], true)) {
+    if (!in_array($baseMode, ['A1', 'A2', 'B1', 'B2', 'C1', 'C2', 'D'], true)) {
         throw new InvalidArgumentException('Invalid TAAS level.');
     }
     foreach ($restrictions as $restriction) {
