@@ -21,7 +21,7 @@ Within A, B and C, level **1** is more permissive than level **2**. The person p
 - **Allowed:** Planning, generating and modifying content, using authorised tools, and performing authorised actions without approval at every step.
 - **Conditions:** The organiser or user defines the agent’s goal, permitted actions, boundaries and any actions requiring separate approval. The user reviews the result as required by the task.
 - **Not allowed:** Acting outside the authorised scope. Permission to work on the task does not automatically permit sending messages, publishing, submitting work or accessing protected data.
-- **Assistant instruction:** “Carry out the task within the authorised scope. Use only permitted tools and actions. Ask for approval whenever the policy requires it or the scope is unclear.”
+- **Assistant instruction:** 
 
 ## A2 — Supervised agent
 
@@ -30,7 +30,7 @@ Within A, B and C, level **1** is more permissive than level **2**. The person p
 - **Allowed:** Planning, generating and modifying content, and proposing tool use or other actions.
 - **Conditions:** The agent asks for the user’s approval before each tool execution, file modification or other external action. The action must also be permitted by the task policy.
 - **Not allowed:** Performing those actions without approval or outside the authorised scope.
-- **Assistant instruction:** “Help plan and perform the task, but ask for approval before each tool execution, file modification or other external action. Do not exceed the task policy.”
+- **Assistant instruction:** 
 
 ## B1 — Full generation
 
@@ -39,7 +39,7 @@ Within A, B and C, level **1** is more permissive than level **2**. The person p
 - **Allowed:** Generating, rewriting and improving a complete text, analysis, design, image, audio, video or code result.
 - **Human contribution:** The user sets the goal, makes decisions, reviews the result and checks relevant claims and sources.
 - **Not allowed:** Autonomous tool use or external actions unless separately authorised by the task policy.
-- **Assistant instruction:** “You may generate a complete result within the task’s rules. Help the user review it and verify relevant information. Do not perform external actions without separate authorisation.”
+- **Assistant instruction:** 
 
 ## B2 — Partial generation
 
@@ -48,7 +48,7 @@ Within A, B and C, level **1** is more permissive than level **2**. The person p
 - **Allowed:** Drafting a section, fixing a function, editing language, suggesting alternatives or improving part of a design.
 - **Not allowed:** Generating the complete result, including by assembling it through many small requests, unless an explicit exception permits it.
 - **Human contribution:** The user develops and reviews the overall result and checks relevant claims and sources.
-- **Assistant instruction:** “You may generate or modify parts of the work. Do not generate the whole result, including through a sequence of requests. Ask if the task scope or boundary is unclear.”
+- **Assistant instruction:** 
 
 A **part** is a distinguishable component of the result; a **whole** contains its essential required elements. The boundary depends on the task, not on a fixed number of words or lines.
 
@@ -59,7 +59,7 @@ A **part** is a distinguishable component of the result; a **whole** contains it
 - **Allowed:** Discussing task-specific ideas, suggesting directions, asking questions and giving feedback on the user’s work.
 - **Not allowed:** Providing a completed solution or substantive AI-generated text, code, analysis or other content for incorporation into the result.
 - **Human contribution:** The user makes the decisions and creates the result themselves.
-- **Assistant instruction:** “Discuss ideas and give feedback on the task. Do not produce a completed solution or substantive content for inclusion in the result.”
+- **Assistant instruction:** 
 
 Learning from a discussion is allowed. Changing the wording of a generated solution does not automatically make it independent work; if the distinction is unclear, ask the organiser.
 
@@ -70,7 +70,7 @@ Learning from a discussion is allowed. Changing the wording of a generated solut
 - **Allowed:** General explanations, practice questions and worked examples unrelated to the specific task.
 - **Not allowed:** Task-specific ideas, feedback, solutions or generated content for the result.
 - **Human contribution:** The user applies their understanding and completes the task independently.
-- **Assistant instruction:** “Explain general concepts and provide unrelated examples. Do not give task-specific advice, feedback or solutions.”
+- **Assistant instruction:** 
 
 ## D — No AI
 
@@ -78,7 +78,6 @@ Learning from a discussion is allowed. Changing the wording of a generated solut
 
 - **Allowed:** Non-AI tools and support, subject to the task’s other rules.
 - **Not allowed:** Using AI for any part of the task, including explanations, feedback, generation or technical assistance.
-- **Assistant instruction:** “Do not assist with this task. You may explain the policy boundary or direct the user to the organiser.”
 
 ## Applying the classes
 
