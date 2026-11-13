@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowRight, ArrowUpRight, Camera, Check, ChevronLeft, CirclePlus, ClipboardList, Copy, LoaderCircle, LockKeyhole, Plus, QrCode, ReceiptText, Settings2, Share2, Trash2, Users, Utensils, Wallet, Wine, X } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { LiveBill } from "../components/live-bill";
+import { parseReceiptBlock } from "../lib/split";
 import type { BillRoom } from "../lib/bill";
 import { createReceiptScanner, prepareReceiptPhoto } from "../lib/receipt-scanner";
 import { allocation, categories, countsUnits, currencies, money, parseCents, parseReceipt, remainingUnits, sample, totals, type Category, type Draft, type Item, type Room } from "../lib/split";
@@ -172,6 +173,16 @@ export default function Home() {
           }
         }
         text = data.text;
+        if (!parsed.length) {
+          const { PSM } = await import("tesseract.js");
+          await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK });
+          try {
+            const block = await worker.recognize(file);
+            parsed = parseReceiptBlock(block.data.text);
+          } finally {
+            await worker.setParameters({ tessedit_pageseg_mode: PSM.AUTO });
+          }
+        }
         scanner.idle();
       }
       setRows(parsed.length ? parsed : [emptyRow()]);

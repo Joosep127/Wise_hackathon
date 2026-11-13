@@ -74,3 +74,8 @@ export function parseReceipt(text: string): Draft[] {
     return [{ name, quantity, amount: m[2].replace(",", "."), category }];
   });
 }
+
+// A textured background can produce stray characters past the price column.
+export function parseReceiptBlock(text: string): Draft[] {
+  return parseReceipt(text.replace(/(\d[.,]\d{2})[ \t]+[^\d\s][^\d\r\n]{0,5}$/gm, "$1"));
+}
