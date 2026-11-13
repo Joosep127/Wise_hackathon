@@ -4,15 +4,15 @@ A set of general-purpose classes defining how AI may be used for a task. **A** a
 
 Within A, B and C, level **1** is more permissive than level **2**. The person performing the task is the **user**; the person setting its rules is the **organiser**.
 
-| Class | AI involvement |
-|---|---|
+| Class  | AI involvement                                              |
+| ------ | ----------------------------------------------------------- |
 | **A1** | An agent can work independently within an authorised scope. |
 | **A2** | An agent can work with the user’s approval for each action. |
-| **B1** | AI can generate a complete result for the user to review. |
-| **B2** | AI can generate or modify parts of the result. |
-| **C1** | AI can discuss task-specific ideas and provide feedback. |
-| **C2** | AI can explain concepts and give unrelated examples. |
-| **D** | AI is not used for the task. |
+| **B1** | AI can generate a complete result for the user to review.   |
+| **B2** | AI can generate or modify parts of the result.              |
+| **C1** | AI can discuss task-specific ideas and provide feedback.    |
+| **C2** | AI can explain concepts and give unrelated examples.        |
+| **D**  | AI is not used for the task.                                |
 
 ## A1 — Autonomous agent
 
@@ -79,6 +79,30 @@ Policy ID: {{POLICY_ID}}
 Policy version: {{POLICY_VERSION}}
 
 Apply the exact supplied version. Link: {link}
+
+### JSON example
+
+{
+  "level": "A1",
+  "goal_scope": "Help prepare a programming assignment",
+  "allowed_actions": [
+    "Explain concepts",
+    "Suggest an implementation plan",
+    "Review user-written code"
+  ],
+  "allowed_tools": [],
+  "restrictions": [
+    "Do not write the complete assessed solution",
+    "Use examples unrelated to the assignment"
+  ],
+  "approval_required": [
+    "Modify project files"
+  ],
+  "protected_resources": [
+    "Private repositories",
+    "Personal data"
+  ]
+}
 
 ## A2 — Supervised agent
 
