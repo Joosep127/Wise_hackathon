@@ -37,6 +37,16 @@ if ($lookup !== '') {
     <p class="eyebrow">Standard &middot; Version 1.0</p>
     <h1>How may AI be used in this work?</h1>
     <p class="lead">A common language for stating the answer. Four ranks, two tiers and one short label, so everyone involved knows exactly where the line is.</p>
+    <aside class="standard-rules" aria-labelledby="standard-rules-title">
+        <h2 id="standard-rules-title">Standard rules for every level</h2>
+        <ul>
+            <li><strong>Work mindfully.</strong> Be deliberate about how you use AI and how it affects your learning. You remain responsible for the work you submit.</li>
+            <li><strong>Document AI use.</strong> State which tools you used, what you used them for, and which parts of your work they helped produce. Keep relevant prompts and outputs with your work.</li>
+            <li><strong>Check the results.</strong> Verify AI-generated claims, references, and solutions before including them in your work.</li>
+            <li><strong>Protect private information.</strong> Do not share personal, confidential, or restricted material with AI tools without permission.</li>
+            <li><strong>Follow the assigned level.</strong> These rules apply whenever AI use is permitted; they do not grant permission beyond the level or the task's additional restrictions.</li>
+        </ul>
+    </aside>
 </section>
 
 <main>
