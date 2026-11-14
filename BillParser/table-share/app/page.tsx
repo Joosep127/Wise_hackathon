@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { ArrowRight, ArrowUpRight, Camera, Check, ChevronLeft, CirclePlus, ClipboardList, Copy, LoaderCircle, LockKeyhole, Plus, QrCode, ReceiptText, Settings2, Share2, Trash2, Users, Utensils, Wallet, Wine, X } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Camera, Check, ChevronLeft, CirclePlus, ClipboardList, Copy, Images, LoaderCircle, LockKeyhole, Plus, QrCode, ReceiptText, Settings2, Share2, Trash2, Users, Utensils, Wallet, Wine, X } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { LiveBill } from "../components/live-bill";
 import { parseReceiptBlock } from "../lib/split";
@@ -13,6 +13,8 @@ type Deleted = { id: string; deleted: true };
 class TableUnavailable extends Error {}
 type Saved = { id: string; title: string };
 type Screen = "home" | "review" | "table";
+type ReviewRow = Draft & { receiptId?: string };
+type ImportedReceipt = { id: string; filename: string; currency: string; count: number };
 const emptyRow = (): Draft => ({ name: "", amount: "", quantity: 1, category: "Food" });
 function QuantityPicker({ name, value, max, disabled, change }: {
   name: string; value: number; max: number; disabled?: boolean; change: (value: number) => void;
@@ -65,7 +67,11 @@ export default function Home() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [saved, setSaved] = useState<Saved[]>([]);
   const [name, setName] = useState(""), [title, setTitle] = useState(""), [currency, setCurrency] = useState("EUR");
-  const [rows, setRows] = useState<Draft[]>([emptyRow()]);
+  const [rows, setRows] = useState<ReviewRow[]>([emptyRow()]);
+  const [receipts, setReceipts] = useState<ImportedReceipt[]>([]);
+  const [scanBatch, setScanBatch] = useState({ current: 0, total: 0, filename: "" });
+  const scanning = useRef(false);
+  const mixedCurrencies = new Set(receipts.filter(r => r.count > 0).map(r => r.currency)).size > 1;
   const [busy, setBusy] = useState(false), [scan, setScan] = useState(""), [error, setError] = useState(""), [offline, setOffline] = useState(false);
   const [ocrNote, setOcrNote] = useState("");
   const [hostScan, setHostScan] = useState(false);
@@ -85,6 +91,7 @@ export default function Home() {
     const url = new URL(location.href);
     if (room) url.searchParams.set("table", room); else url.searchParams.delete("table");
     history.replaceState(null, "", url);
+    window.scrollTo({ top: 0, left: 0 });
   }
   useEffect(() => {
     void fetch("/api/receipt").then(r => r.json()).then(data => setHostScan((data as { available?: boolean }).available === true)).catch(() => {});
@@ -136,6 +143,7 @@ export default function Home() {
   }, [share, editor]);
   function review(demo: boolean) {
     setPicks(null);
+    setReceipts([]);
     setRows(demo ? sample.map(i => ({ ...i })) : [emptyRow()]); setTitle(demo ? "Osteria Luna" : ""); setCurrency("EUR"); setOcrNote(""); navigate("review");
   }
   function choosePhoto(useCamera = false) {
@@ -145,10 +153,7 @@ export default function Home() {
     }
     (useCamera ? camera : upload).current?.click();
   }
-  async function scanPhoto(file?: File) {
-    if (!file) return;
-    review(false); setScan("Reading receipt…");
-    try {
+  async function readPhoto(file: File) {
       const image = await prepareReceiptPhoto(file, hostScan);
       let text = "";
       if (hostScan && image.size <= 8 * 1024 * 1024) {
@@ -183,21 +188,64 @@ export default function Home() {
             await worker.setParameters({ tessedit_pageseg_mode: PSM.AUTO });
           }
         }
-        scanner.idle();
       }
-      setRows(parsed.length ? parsed : [emptyRow()]);
-      setPicks(parsed.length ? parsed.map(() => 0) : null);
       const merchant = text.split(/\r?\n/).find(l => /[a-z]{3}/i.test(l))?.trim().replace(/\s+[:;](?=&)/g, " ").slice(0, 80) || "Dinner";
-      setTitle(merchant);
-      setOcrNote(parsed.length ? "Check the items and total against your receipt, including tax and service." : "No prices were recognised. Enter the receipt lines below.");
-      if (parsed.length) {
-        setPicks(null);
-        const detectedCurrency = /\bUSD\b|\$/.test(text) ? "USD" : /\bGBP\b|£/.test(text) ? "GBP" : "EUR";
-        setCurrency(detectedCurrency);
-        await act({ action:"create", liveBill:true, name:name.trim() || "Organiser", title:merchant, currency:detectedCurrency, items:parsed });
+      const detectedCurrency = /\bUSD\b|\$/.test(text) ? "USD" : /\bGBP\b|£/.test(text) ? "GBP" : "EUR";
+      return { rows: parsed, merchant, currency: detectedCurrency };
+  }
+  async function scanPhotos(files: File[]) {
+    if (!files.length || scanning.current) return;
+    scanning.current = true;
+    const append = screen === "review";
+    const combined: ReviewRow[] = append ? rows.filter(r => r.name.trim() || r.amount.trim()) : [];
+    const imported = append ? [...receipts] : [];
+    let tableTitle = append ? title : "";
+    let tableCurrency = append ? currency : "";
+    if (!append) review(false);
+    setPicks(null);
+    setScan("Preparing photos…");
+    try {
+      // Reuse one OCR worker and process one image at a time to limit phone memory.
+      for (const [index, file] of files.entries()) {
+        setScanBatch({ current: index + 1, total: files.length, filename: file.name });
+        setScan("Reading receipt…");
+        const receiptId = "receipt-" + crypto.getRandomValues(new Uint32Array(2)).join("-");
+        try {
+          const result = await readPhoto(file);
+          combined.push(...result.rows.map(row => ({ ...row, receiptId })));
+          imported.push({ id: receiptId, filename: file.name, currency: result.currency, count: result.rows.length });
+          if (result.rows.length) {
+            tableTitle ||= result.merchant;
+            tableCurrency ||= result.currency;
+          }
+        } catch {
+          scanner.release();
+          imported.push({ id: receiptId, filename: file.name, currency: "", count: 0 });
+        }
       }
-    } catch { scanner.release(); setOcrNote("The photo could not be read. Enter the items below or try another photo."); }
-    finally { setScan(""); if (upload.current) upload.current.value = ""; if (camera.current) camera.current.value = ""; }
+      setRows(combined.length ? combined : [emptyRow()]);
+      setReceipts(imported);
+      setTitle(imported.filter(r => r.count).length > 1 && !append ? "Combined receipts" : tableTitle || "Dinner");
+      setCurrency(tableCurrency || "EUR");
+      setOcrNote("Check the quantities and totals against your receipts before creating the table.");
+      if (!name.trim()) setName("Organiser");
+      if (!append && files.length === 1 && combined.length > 0 && combined.length <= 150) {
+        await act({ action: "create", liveBill: true, name: name.trim() || "Organiser", title: tableTitle, currency: tableCurrency, items: combined });
+      }
+    } finally {
+      scanning.current = false;
+      scanner.idle();
+      setScan("");
+      if (upload.current) upload.current.value = "";
+      if (camera.current) camera.current.value = "";
+    }
+  }
+  function removeReceipt(receiptId: string) {
+    const remaining = receipts.filter(r => r.id !== receiptId);
+    setReceipts(remaining);
+    setRows(rows.filter(row => row.receiptId !== receiptId));
+    const detected = remaining.find(r => r.count > 0)?.currency;
+    if (detected) setCurrency(detected);
   }
   async function act(cmd: { action: string; [key: string]: unknown }) {
     setBusy(true); setError("");
@@ -223,8 +271,8 @@ export default function Home() {
   return <>
     <header><div className="shell nav"><button className="brand" disabled={!!scan || busy} onClick={() => navigate("home")}><span className="brandmark" aria-hidden="true"><i/><i/><i/><i/></span>Table Share</button>
       <button className="nav-link" disabled={!!scan || busy} onClick={() => navigate("home")}><ClipboardList size={17}/> My tables</button></div></header>
-    <input hidden ref={upload} type="file" accept="image/*" onChange={e => scanPhoto(e.target.files?.[0])}/>
-    <input hidden ref={camera} type="file" accept="image/*" capture="environment" onChange={e => scanPhoto(e.target.files?.[0])}/>
+    <input hidden ref={upload} type="file" accept="image/*" multiple onChange={e => scanPhotos(Array.from(e.target.files || []))}/>
+    <input hidden ref={camera} type="file" accept="image/*" capture="environment" onChange={e => scanPhotos(Array.from(e.target.files || []))}/>
     <main className="shell">
       {error && <div className="error" role="alert">{error}<button aria-label="Dismiss message" onClick={() => setError("")}><X size={16}/></button></div>}
       {screen === "home" && <>
@@ -233,8 +281,8 @@ export default function Home() {
           <h1>Split the<br/><em>table bill.</em></h1>
           <p>Scan your receipt and let everyone pick their dishes. Share a plate, a bottle, or the whole bill.</p>
           <button className="primary hero-cta" onClick={()=>choosePhoto(true)}><Camera/> Scan a receipt <ArrowUpRight size={18}/></button>
-          <button className="text-link" onClick={()=>choosePhoto()}>Choose a receipt photo</button>
-          {hostScan && <small>Photos are read on the host Mac.</small>}
+          <button className="secondary upload-receipts" onClick={()=>choosePhoto()}><Images size={20}/> Upload receipt photos</button>
+          <small className="upload-hint">Choose several photos to combine bills.</small>
           <button className="text-link" disabled={busy} onClick={() => act({action:"create",liveBill:true,name:name.trim()||"Organiser",title:"Osteria Luna",currency:"EUR",items:sample})}>Try a sample receipt <ArrowRight size={15}/></button>
         </div><SampleReceipt/></div>
         <div className="section-line"><h2>My tables</h2><button className="inline" onClick={() => review(false)}><Plus size={16}/> Enter a bill manually</button></div>
@@ -243,8 +291,14 @@ export default function Home() {
       </>}
       {screen === "review" && <>
         <button className="back" disabled={!!scan || busy} onClick={() => navigate("home")}><ChevronLeft/> My tables</button>
-        <h1 className="page-title">Review receipt</h1>
-        {scan ? <div className="panel loading" role="status"><LoaderCircle className="spin"/>{scan}</div> : <form className="panel review" onSubmit={e => { e.preventDefault(); act({ action: "create", liveBill:true, items: rows, currency, name, title }); }}>
+        <h1 className="page-title">{receipts.length > 1 ? "Review combined bill" : "Review receipt"}</h1>
+        {scan ? <div className="panel scan-status" role="status"><LoaderCircle className="spin"/><h2>Receipt {scanBatch.current} of {scanBatch.total}</h2><p>{scanBatch.filename}</p><progress value={scanBatch.current-1} max={scanBatch.total || 1}/><small>{scan}</small></div> : <form className="panel review" onSubmit={e => { e.preventDefault(); if (!mixedCurrencies && rows.length <= 150) act({ action: "create", liveBill:true, items: rows, currency, name, title }); }}>
+          {receipts.length > 0 && <div className="imported-receipts">{receipts.map(receipt => <div key={receipt.id}>
+            <ReceiptText size={20}/><span><strong>{receipt.filename}</strong><small>{receipt.count ? receipt.count+" items · "+receipt.currency : "Could not read this photo · not included"}</small></span>
+            <button type="button" aria-label={"Remove receipt "+receipt.filename} onClick={()=>removeReceipt(receipt.id)}><X size={18}/></button>
+          </div>)}</div>}
+          {mixedCurrencies && <p className="error" role="alert">These receipts use different currencies. Remove receipts in another currency to combine this bill.</p>}
+          {rows.length > 150 && <p className="error" role="alert">A table supports 150 receipt lines. Remove a receipt or some lines to continue.</p>}
           {picks && <section className="quick-picks"><h2>Choose your items</h2><p>Tap what you had. Others can join any item when you share the table.</p>
             {rows.map((row, index) => row.quantity > 1 ? <div className="quantity-choice" key={index}><div><strong>{row.name}</strong><small>{row.quantity} ordered · {amount(parseCents(row.amount) || 0)} total</small></div>
               <QuantityPicker name={row.name} value={picks[index]} max={row.quantity} change={value => setPicks(picks.map((n, i) => i === index ? value : n))}/></div> :
@@ -255,7 +309,7 @@ export default function Home() {
           <div className="form-grid"><label>Table or restaurant<input required maxLength={80} value={title} placeholder="Friday dinner" onChange={e => setTitle(e.target.value)}/></label>
           <label>Your name · organiser<input required maxLength={32} value={name} placeholder="Your name" onChange={e => setName(e.target.value)}/></label>
           <label>Currency<select value={currency} onChange={e => setCurrency(e.target.value)}>{currencies.map(c => <option key={c}>{c}</option>)}</select></label></div>
-          <div className="section-line"><h2>Receipt items</h2><button type="button" className="inline" onClick={()=>choosePhoto()}><Camera size={16}/> Scan photo</button></div>
+          <div className="section-line"><h2>Receipt items</h2><button type="button" className="secondary" onClick={()=>choosePhoto()}><Images size={16}/> Add photos</button></div>
           {rows.map((r, i) => <div className="draft-row" key={i}>
             <label className="draft-quantity">Qty<input aria-label={"Quantity for " + (r.name || "new item")} required type="number" min={1} max={999} step={1} value={r.quantity || ""} onChange={e => {
               const quantity = Number(e.target.value);
@@ -268,8 +322,8 @@ export default function Home() {
             <button type="button" aria-label="Remove item" onClick={() => { setRows(rows.filter((_, j) => i !== j)); setPicks(prev => prev && prev.filter((_, j) => i !== j)); }}><Trash2 size={16}/></button>
           </div>)}
           <button type="button" className="inline add" onClick={() => { setRows([...rows, emptyRow()]); setPicks(prev => prev && [...prev, 0]); }}><CirclePlus size={17}/> Add item</button>
-          <div className="total-row"><span>Receipt total</span><strong>{amount(rows.reduce((n, r) => n + (parseCents(r.amount) || 0), 0))}</strong></div>
-          <button className="primary" disabled={busy || !rows.length}>Create table <ArrowRight size={17}/></button>
+          <div className="review-footer"><div className="total-row"><span>Combined total</span><strong>{mixedCurrencies ? "Mixed currencies" : amount(rows.reduce((n, r) => n + (parseCents(r.amount) || 0), 0))}</strong></div>
+          <button className="primary" disabled={busy || !rows.length || mixedCurrencies || rows.length > 150}>Create table <ArrowRight size={17}/></button></div>
         </form>}
       </>}
       {screen === "table" && <><button className="back" onClick={() => navigate("home")} disabled={busy}><ChevronLeft/> My tables</button>

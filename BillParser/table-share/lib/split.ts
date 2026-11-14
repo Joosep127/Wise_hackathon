@@ -65,10 +65,18 @@ export function totals(room: Room) {
   }
   return { balances, unclaimed, total, incomplete };
 }
+function isReceiptSummary(label: string) {
+  const normalized = label.normalize("NFKC").toLowerCase();
+  if (/\b(subtotal|total|cash|change|tender(?:ed)?|balance|paid|payment|visa|mastercard|amex|card|debit|credit|amount\s+(?:due|charged)|to\s+pay|kokku|tasutud|makstud)\b/.test(normalized)) return true;
+  // Receipt printers space out headings; OCR can read TOTAL as T0TA1 or TOTAI.
+  const compact = normalized.replace(/[^a-z0-9]/g, "");
+  return /^(?:(?:sub|grand|net|gross)?t[o0]ta[l1i]|amount(?:due|paid|tendered|charged)|paid|payment|cash|change|balance|card(?:payment)?)(?:eur|usd|gbp)?$/.test(compact);
+}
+
 export function parseReceipt(text: string): Draft[] {
   return text.split(/\r?\n/).flatMap(line => {
     const m = line.trim().match(/^(.+?)\s+(?:[€£$]\s*)?(\d{1,6}[.,]\d{2})(?:\s*[€£$A-Z])?$/i);
-    if (!m || /\b(sub\s*total|total|cash|change|tender|balance|amount paid|visa|mastercard|amount due)\b/i.test(m[1])) return [];
+    if (!m || isReceiptSummary(m[1])) return [];
     const { name, quantity } = receiptQuantity(m[1].trim());
     const category = /\b(wine|beer|water|coffee|tea|juice|lemonade|coke|colas?|soda|lager|cocktail)\b/i.test(name) ? "Drinks" : /\b(tax|tip|service|vat)\b/i.test(name) ? "Extras" : "Food";
     return [{ name, quantity, amount: m[2].replace(",", "."), category }];
