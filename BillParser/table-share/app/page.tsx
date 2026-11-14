@@ -41,25 +41,12 @@ async function request(id: string, token: string, cmd?: object): Promise<Snapsho
     body: cmd ? JSON.stringify(cmd) : undefined,
   });
   const data = await response.json() as (Snapshot | Deleted) & { error?: string };
-  if (response.status === 404) throw new TableUnavailable("This table was deleted or its link is no longer available.");
-  if (!response.ok) throw new Error(data.error || "Could not open the table.");
+  if (response.status === 404) throw new TableUnavailable("This bill was deleted or its link is no longer available.");
+  if (!response.ok) throw new Error(data.error || "Could not open the bill.");
   return data;
 }
 const errorText = (e: unknown) => e instanceof Error ? e.message : "Something went wrong. Please try again.";
 const CategoryIcon = ({ category }: { category: Category }) => category === "Food" ? <Utensils/> : category === "Drinks" ? <Wine/> : <ReceiptText/>;
-
-function SampleReceipt() {
-  return <div className="tablecloth" aria-label="Example restaurant receipt">
-    <div className="paper-shadow"><div className="paper">
-      <div className="receipt-icon"><Utensils size={24}/></div>
-      <h2>OSTERIA LUNA</h2><div className="paper-sub">DINNER RECEIPT</div>
-      <div className="ticket-meta"><span>TABLE 04</span><span>GUESTS 03</span></div>
-      {sample.map(s => <div className="ticket-line" key={s.name}><span>{s.name}</span><span>{s.amount}</span></div>)}
-      <div className="ticket-total"><span>TOTAL</span><span>€42.00</span></div>
-      <div className="barcode" aria-hidden="true"/><small>GRAZIE MILLE</small>
-    </div></div>
-  </div>;
-}
 
 export default function Home() {
   const [screen, setScreen] = useState<Screen>("home");
@@ -227,7 +214,7 @@ export default function Home() {
       setReceipts(imported);
       setTitle(imported.filter(r => r.count).length > 1 && !append ? "Combined receipts" : tableTitle || "Dinner");
       setCurrency(tableCurrency || "EUR");
-      setOcrNote("Check the quantities and totals against your receipts before creating the table.");
+      setOcrNote("Check the quantities and totals against your receipts before creating the bill.");
       if (!name.trim()) setName("Organiser");
       if (!append && files.length === 1 && combined.length > 0 && combined.length <= 150) {
         await act({ action: "create", liveBill: true, name: name.trim() || "Organiser", title: tableTitle, currency: tableCurrency, items: combined });
@@ -253,7 +240,7 @@ export default function Home() {
       const creating = cmd.action === "create";
       const token = sessionKey(creating ? "organiser" : id);
       const data = await request(id, token, cmd);
-      if ("deleted" in data) { forget(data.id,"The table has been deleted."); return data; }
+      if ("deleted" in data) { forget(data.id,"The bill has been deleted."); return data; }
       if (creating) { localStorage.setItem("tableshare.identity." + data.id, token); navigate("table", data.id); }
       if (creating || cmd.action === "join") remember(data);
       accept(data); setEditor(null); return data;
@@ -269,28 +256,26 @@ export default function Home() {
   const amount = (cents: number) => money(cents, room?.currency || currency);
   function closeDialog() { setShare(false); setCopied(false); setEditor(null); }
   return <>
-    <header><div className="shell nav"><button className="brand" disabled={!!scan || busy} onClick={() => navigate("home")}><span className="brandmark" aria-hidden="true"><i/><i/><i/><i/></span>Table Share</button>
-      <button className="nav-link" disabled={!!scan || busy} onClick={() => navigate("home")}><ClipboardList size={17}/> My tables</button></div></header>
+    <header><div className="shell nav"><button className="brand" aria-label={screen==="home"?"Bill Splitter":"Back to home"} disabled={!!scan || busy} onClick={() => navigate("home")}>{screen!=="home" && <ChevronLeft size={20}/>}<img className="brandmark" src="/logo.svg" width={24} height={24} alt=""/>Bill splitter</button></div></header>
     <input hidden ref={upload} type="file" accept="image/*" multiple onChange={e => scanPhotos(Array.from(e.target.files || []))}/>
     <input hidden ref={camera} type="file" accept="image/*" capture="environment" onChange={e => scanPhotos(Array.from(e.target.files || []))}/>
     <main className="shell">
       {error && <div className="error" role="alert">{error}<button aria-label="Dismiss message" onClick={() => setError("")}><X size={16}/></button></div>}
       {screen === "home" && <>
-        <div className="home-hero"><div className="hero-copy">
-          <div className="eyebrow"><span/> BILL SPLITTER</div>
-          <h1>Split the<br/><em>table bill.</em></h1>
-          <p>Scan your receipt and let everyone pick their dishes. Share a plate, a bottle, or the whole bill.</p>
-          <button className="primary hero-cta" onClick={()=>choosePhoto(true)}><Camera/> Scan a receipt <ArrowUpRight size={18}/></button>
-          <button className="secondary upload-receipts" onClick={()=>choosePhoto()}><Images size={20}/> Upload receipt photos</button>
-          <small className="upload-hint">Choose several photos to combine bills.</small>
-          <button className="text-link" disabled={busy} onClick={() => act({action:"create",liveBill:true,name:name.trim()||"Organiser",title:"Osteria Luna",currency:"EUR",items:sample})}>Try a sample receipt <ArrowRight size={15}/></button>
-        </div><SampleReceipt/></div>
-        <div className="section-line"><h2>My tables</h2><button className="inline" onClick={() => review(false)}><Plus size={16}/> Enter a bill manually</button></div>
-        {saved.length ? <div className="saved">{saved.map(t => <button key={t.id} onClick={() => navigate("table", t.id)}><span className="soft-icon"><ReceiptText/></span><strong>{t.title}</strong><ArrowUpRight size={18}/></button>)}</div> :
-          <div className="empty"><span className="soft-icon"><ReceiptText/></span><div><strong>No tables yet</strong><p>Your shared bills will appear here.</p></div></div>}
+        <section className="start-bill">
+          <h1>Split a bill.</h1>
+          <p>Scan, share, and let everyone choose.</p>
+          <button className="primary" onClick={()=>choosePhoto(true)}><Camera size={20}/> Scan receipt</button>
+          <button className="secondary" onClick={()=>choosePhoto()}><Images size={20}/> Upload photos</button>
+          <small>Combine several receipts in one upload.</small>
+          <details className="start-alternatives"><summary>More ways to start</summary>
+            <button className="text-link" onClick={() => review(false)}>Enter items manually</button>
+            <button className="text-link" disabled={busy} onClick={() => act({action:"create",liveBill:true,name:name.trim()||"Organiser",title:"Osteria Luna",currency:"EUR",items:sample})}>Try a sample receipt</button>
+          </details>
+        </section>
+        {saved.length>0 && <section className="recent-tables"><h2>Recent bills</h2><div className="saved">{saved.map(t => <button key={t.id} onClick={() => navigate("table", t.id)}><ReceiptText size={20}/><strong>{t.title}</strong><ArrowRight size={18}/></button>)}</div></section>}
       </>}
       {screen === "review" && <>
-        <button className="back" disabled={!!scan || busy} onClick={() => navigate("home")}><ChevronLeft/> My tables</button>
         <h1 className="page-title">{receipts.length > 1 ? "Review combined bill" : "Review receipt"}</h1>
         {scan ? <div className="panel scan-status" role="status"><LoaderCircle className="spin"/><h2>Receipt {scanBatch.current} of {scanBatch.total}</h2><p>{scanBatch.filename}</p><progress value={scanBatch.current-1} max={scanBatch.total || 1}/><small>{scan}</small></div> : <form className="panel review" onSubmit={e => { e.preventDefault(); if (!mixedCurrencies && rows.length <= 150) act({ action: "create", liveBill:true, items: rows, currency, name, title }); }}>
           {receipts.length > 0 && <div className="imported-receipts">{receipts.map(receipt => <div key={receipt.id}>
@@ -298,15 +283,15 @@ export default function Home() {
             <button type="button" aria-label={"Remove receipt "+receipt.filename} onClick={()=>removeReceipt(receipt.id)}><X size={18}/></button>
           </div>)}</div>}
           {mixedCurrencies && <p className="error" role="alert">These receipts use different currencies. Remove receipts in another currency to combine this bill.</p>}
-          {rows.length > 150 && <p className="error" role="alert">A table supports 150 receipt lines. Remove a receipt or some lines to continue.</p>}
-          {picks && <section className="quick-picks"><h2>Choose your items</h2><p>Tap what you had. Others can join any item when you share the table.</p>
+          {rows.length > 150 && <p className="error" role="alert">A bill supports 150 receipt lines. Remove a receipt or some lines to continue.</p>}
+          {picks && <section className="quick-picks"><h2>Choose your items</h2><p>Tap what you had. Others can join any item when you share the bill.</p>
             {rows.map((row, index) => row.quantity > 1 ? <div className="quantity-choice" key={index}><div><strong>{row.name}</strong><small>{row.quantity} ordered · {amount(parseCents(row.amount) || 0)} total</small></div>
               <QuantityPicker name={row.name} value={picks[index]} max={row.quantity} change={value => setPicks(picks.map((n, i) => i === index ? value : n))}/></div> :
               <button type="button" key={index} aria-pressed={!!picks[index]} onClick={() => setPicks(picks.map((n, i) => i === index ? 1 - n : n))}>
               {picks[index] ? <Check size={18}/> : <Plus size={18}/>}<span>{row.name || "New item"}</span><b>{amount(parseCents(row.amount) || 0)}</b>
             </button>)}</section>}
           {ocrNote && <p className="notice">{ocrNote}</p>}
-          <div className="form-grid"><label>Table or restaurant<input required maxLength={80} value={title} placeholder="Friday dinner" onChange={e => setTitle(e.target.value)}/></label>
+          <div className="form-grid"><label>Bill or restaurant<input required maxLength={80} value={title} placeholder="Friday dinner" onChange={e => setTitle(e.target.value)}/></label>
           <label>Your name · organiser<input required maxLength={32} value={name} placeholder="Your name" onChange={e => setName(e.target.value)}/></label>
           <label>Currency<select value={currency} onChange={e => setCurrency(e.target.value)}>{currencies.map(c => <option key={c}>{c}</option>)}</select></label></div>
           <div className="section-line"><h2>Receipt items</h2><button type="button" className="secondary" onClick={()=>choosePhoto()}><Images size={16}/> Add photos</button></div>
@@ -323,15 +308,15 @@ export default function Home() {
           </div>)}
           <button type="button" className="inline add" onClick={() => { setRows([...rows, emptyRow()]); setPicks(prev => prev && [...prev, 0]); }}><CirclePlus size={17}/> Add item</button>
           <div className="review-footer"><div className="total-row"><span>Combined total</span><strong>{mixedCurrencies ? "Mixed currencies" : amount(rows.reduce((n, r) => n + (parseCents(r.amount) || 0), 0))}</strong></div>
-          <button className="primary" disabled={busy || !rows.length || mixedCurrencies || rows.length > 150}>Create table <ArrowRight size={17}/></button></div>
+          <button className="primary" disabled={busy || !rows.length || mixedCurrencies || rows.length > 150}>Create bill <ArrowRight size={17}/></button></div>
         </form>}
       </>}
-      {screen === "table" && <><button className="back" onClick={() => navigate("home")} disabled={busy}><ChevronLeft/> My tables</button>
-        {!snap || !room || !bill ? <div className="panel loading">{offline ? "Table unavailable" : "Opening table…"}</div> : <>
-          {(!room.board || !me) && <div className="section-line table-heading"><div><div className="eyebrow"><span/>{room.locked ? "LOCKED SPLIT" : offline ? "RECONNECTING" : "LIVE TABLE"}</div><h1 className="page-title">{room.title}</h1></div>
+      {screen === "table" && <>
+        {!snap || !room || !bill ? <div className="panel loading">{offline ? "Bill unavailable" : "Opening bill…"}</div> : <>
+          {(!room.board || !me) && <div className="section-line table-heading"><div><div className="eyebrow"><span/>{room.locked ? "LOCKED SPLIT" : offline ? "RECONNECTING" : "LIVE BILL"}</div><h1 className="page-title">{room.title}</h1></div>
           {me && <button className="secondary" onClick={() => setShare(true)}><QrCode size={17}/> Share QR</button>}</div>}
-          {!me ? <form className="panel join" onSubmit={e => { e.preventDefault(); act({ action: "join", name }); }}><Users/><h2>Join the table</h2><p>{room.people.find(p => p.id === room.host)?.name} covered the {amount(bill.total)} bill.</p>
-            <label>Your name<input required maxLength={32} value={name} onChange={e => setName(e.target.value)}/></label><button className="primary" disabled={busy || room.locked}>{room.locked ? "Table locked" : "Join table"} <ArrowRight/></button></form> :
+          {!me ? <form className="panel join" onSubmit={e => { e.preventDefault(); act({ action: "join", name }); }}><Users/><h2>Join the bill</h2><p>{room.people.find(p => p.id === room.host)?.name} covered the {amount(bill.total)} bill.</p>
+            <label>Your name<input required maxLength={32} value={name} onChange={e => setName(e.target.value)}/></label><button className="primary" disabled={busy || room.locked}>{room.locked ? "Bill locked" : "Join bill"} <ArrowRight/></button></form> :
           room.board ? <LiveBill key={id+":"+(room.board.generation??0)} room={room as BillRoom} id={id} me={snap.me} revision={snap.revision} busy={busy} act={act} token={sessionKey(id)} error={error}/> :
           <div className="room-grid"><section className="panel"><div className="section-line"><h2>Shared receipt</h2><b>{amount(bill.total)}</b></div>
             {categories.filter(c => room.items.some(i => i.category === c)).map(c => <section className="group" key={c}>
@@ -350,7 +335,7 @@ export default function Home() {
                     {host && <button className="settings" aria-label={"Edit split for " + item.name} onClick={() => { setEditor(item); setSharePortions(!!item.sharedPortions || item.everyone); setWeights(item.everyone ? Object.fromEntries(room.people.map(p => [p.id, 1])) : { ...item.weights }); }}><Settings2 size={16}/></button>}</div>}</div></div>;
               })}</section>)}</section>
             <aside><div className="summary"><Wallet/><p>Your share</p><strong>{amount(bill.balances[me.id])}</strong><small>{host ? "You covered the bill" : "Payable to " + room.people.find(p => p.id === room.host)?.name}</small></div>
-            <section className="panel"><h2>At the table</h2>{room.people.map((p, i) => <div className="person" key={p.id}><span className={"avatar a" + i%3}>{p.name.slice(0,1).toUpperCase()}</span><div>{p.name}{p.id === me.id ? " (you)" : ""}<small>{p.id === room.host ? "Organiser" : p.paid ? "Demo payment received" : room.locked ? "Ready to settle" : "Choosing items"}</small></div><b>{amount(bill.balances[p.id])}</b></div>)}
+            <section className="panel"><h2>Participants</h2>{room.people.map((p, i) => <div className="person" key={p.id}><span className={"avatar a" + i%3}>{p.name.slice(0,1).toUpperCase()}</span><div>{p.name}{p.id === me.id ? " (you)" : ""}<small>{p.id === room.host ? "Organiser" : p.paid ? "Demo payment received" : room.locked ? "Ready to settle" : "Choosing items"}</small></div><b>{amount(bill.balances[p.id])}</b></div>)}
             <div className="total-row"><span>Unclaimed</span><b>{amount(bill.unclaimed)}</b></div>
             {host && !room.locked && <button className="primary" disabled={busy || bill.incomplete} onClick={() => act({ action: "lock", revision: snap.revision })}><LockKeyhole size={16}/> Lock for checkout</button>}
             {room.locked && !host && bill.balances[me.id] > 0 && <><p className="muted">Demo checkout · no money moves.</p>
@@ -358,8 +343,8 @@ export default function Home() {
             </section></aside></div>}
         </>}</>}
     </main>
-    <dialog ref={dialog} onCancel={closeDialog} aria-label={share ? "Invite to table" : "Edit item split"}><button className="close" onClick={closeDialog} aria-label="Close"><X/></button>
-      {share && <><Share2/><h2>Invite to the table</h2><p>Scan this code or share the table link.</p><div className="qr"><QRCodeSVG value={shareUrl} size={180} marginSize={2}/></div><label>Table link<input readOnly value={shareUrl} onFocus={e => e.target.select()}/></label>
+    <dialog ref={dialog} onCancel={closeDialog} aria-label={share ? "Invite to bill" : "Edit item split"}><button className="close" onClick={closeDialog} aria-label="Close"><X/></button>
+      {share && <><Share2/><h2>Invite to the bill</h2><p>Scan this code or share the bill link.</p><div className="qr"><QRCodeSVG value={shareUrl} size={180} marginSize={2}/></div><label>Bill link<input readOnly value={shareUrl} onFocus={e => e.target.select()}/></label>
       <button className="primary" onClick={async () => { try { await navigator.clipboard.writeText(shareUrl); setCopied(true); } catch { dialog.current?.querySelector("input")?.select(); } }}>{copied ? <Check/> : <Copy/>}{copied ? "Copied" : "Copy link"}</button></>}
       {editor && room && <><Settings2/><h2>{editor.name}</h2>
       {editor.quantity > 1 && <label>Split method<select value={sharePortions ? "portions" : "units"} onChange={e => setSharePortions(e.target.value === "portions")}><option value="units">Assign whole items</option><option value="portions">Share the line by portions</option></select></label>}

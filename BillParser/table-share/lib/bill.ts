@@ -6,12 +6,23 @@ export type Selection = Record<string, number>;
 export type Group = { id: string; name: string; items: Selection; paidBy?: string };
 export type Pattern = { name: string; units: number }[];
 export type Payment = { actor: string; key: string; pattern: Pattern; total: number; group?: string; items?: Selection };
+type GroupUndo = { actor: string; revision: number; picks: Record<string, Selection>; groups: Group[] };
 export type Board = {
   picks: Record<string, Selection>; groups: Group[]; paid: Selection; payments: Payment[];
   generation?: number; receiptBeforeEdit?: Item[];
-  undo?: { actor: string; revision: number; picks: Record<string, Selection>; groups: Group[] };
+  undo?: GroupUndo;
+  undoHistory?: GroupUndo[];
 };
 export type BillRoom = Room & { board: Board };
+export function isItemSettled(item: Item, room: BillRoom) {
+  const paid = room.board.paid[item.id] || 0;
+  const organiserShare = room.board.picks[room.host]?.[item.id] || 0;
+  return paid > 0 && paid + organiserShare >= item.cents;
+}
+export function isBillCovered(room: BillRoom) {
+  return room.items.length > 0 && room.items.every(item =>
+    (room.board.paid[item.id] || 0) + (room.board.picks[room.host]?.[item.id] || 0) >= item.cents);
+}
 export const sum = (values: Selection) => Object.values(values).reduce((a, b) => a + b, 0);
 export const itemKey = (name: string) => name.normalize("NFKC").trim().toLowerCase().replace(/\s+/g, " ");
 export function available(item: Item, board: Board) {
@@ -45,6 +56,17 @@ export function paymentLines(room: Room, payment: Payment): Selection | undefine
 function requireValue(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
+function receiptLineInput(cmd: BillAction) {
+  requireValue(typeof cmd.name === "string" && cmd.name.trim() && cmd.name.trim().length <= 100 &&
+    Number.isSafeInteger(cmd.cents) && cmd.cents! > 0 && cmd.cents! <= 99999999 &&
+    Number.isInteger(cmd.quantity) && cmd.quantity! > 0 && cmd.quantity! <= 9999,
+    "Check the name, quantity and line total.");
+  return {name:cmd.name.trim(), cents:cmd.cents!, quantity:cmd.quantity!};
+}
+function clearGroupHistory(board: Board) {
+  delete board.undo;
+  delete board.undoHistory;
+}
 export type BillAction = {
   action: string; revision?: number; item?: string; cents?: number; ids?: string[];
   group?: string; name?: string; targets?: string[]; pieces?: number; pattern?: Pattern;
@@ -56,7 +78,28 @@ export function updateBill(room: BillRoom, actor: string, cmd: BillAction, revis
   const group = b.groups.find(g => g.id === cmd.group);
   const item = room.items.find(i => i.id === cmd.item);
   const host = room.host === actor;
-  requireValue((cmd.generation ?? 0) === (b.generation ?? 0), "The table was reset. Review the current items and try again.");
+  requireValue((cmd.generation ?? 0) === (b.generation ?? 0), "The bill was reset. Review the current items and try again.");
+  if (cmd.action === "closeTable") {
+    requireValue(host, "Only the organiser can close the bill.");
+    requireValue(isBillCovered(room), "Every item must be covered before closing the bill.");
+    room.locked = true;
+    clearGroupHistory(b);
+    return;
+  }
+  requireValue(!room.locked, "This bill is closed.");
+  if (cmd.action === "addLine") {
+    requireValue(!host, "Guests can add missing receipt lines.");
+    requireValue(typeof cmd.key === "string" && /^[a-zA-Z0-9-]{1,80}$/.test(cmd.key), "Reopen the add line form.");
+    const id = `guest-${actor}-${cmd.key}`;
+    if (room.items.some(line => line.id === id)) return;
+    requireValue(room.items.length < 150, "A bill supports up to 150 receipt lines.");
+    const fields = receiptLineInput(cmd);
+    requireValue(cmd.category === "Food" || cmd.category === "Drinks" || cmd.category === "Extras", "Choose an item category.");
+    b.receiptBeforeEdit ??= structuredClone(room.items);
+    room.items.push({id, ...fields, category:cmd.category, everyone:false, weights:{}, revision:0});
+    clearGroupHistory(b);
+    return;
+  }
   const makeGroup = (name: string) => {
     requireValue(typeof name === "string" && name.trim() && name.trim().length <= 40 && b.groups.length < 50, "Enter a group name of up to 40 characters (maximum 50 groups).");
     const next = { id: crypto.randomUUID(), name: name.trim(), items: {} as Selection };
@@ -76,12 +119,15 @@ export function updateBill(room: BillRoom, actor: string, cmd: BillAction, revis
     for (const [id, cents] of entries) b.paid[id] = (b.paid[id] || 0) + cents;
     b.payments.push({ actor, key: cmd.key, total: sum(share), pattern, items: {...share}, ...(group ? {group: group.id} : {}) });
     if (group) group.paidBy = actor; else delete b.picks[actor];
-    delete b.undo;
+    clearGroupHistory(b);
     return;
   }
   if (cmd.action === "undo") {
     requireValue(host && b.undo?.actor === actor && b.undo.revision === revision, "Another change followed this edit. Undo is unavailable.");
-    b.picks = b.undo.picks; b.groups = b.undo.groups; delete b.undo;
+    b.picks = b.undo.picks; b.groups = b.undo.groups;
+    b.undo = b.undoHistory?.pop();
+    if (b.undo) b.undo.revision = revision + 1;
+    if (!b.undoHistory?.length) delete b.undoHistory;
     return;
   }
   if (cmd.action === "select") {
@@ -102,11 +148,11 @@ export function updateBill(room: BillRoom, actor: string, cmd: BillAction, revis
     return;
   }
   if (cmd.action === "resetMine") {
-    requireValue(!host, "Use the table reset or clear your own items.");
+    requireValue(!host, "Use the bill reset or clear your own items.");
     const undoPaid: Selection = {};
     for (const p of b.payments.filter(p => p.actor === actor)) {
       const lines = paymentLines(room, p);
-      requireValue(lines, "This older payment has no exact item history. The organiser can reset the whole demo table.");
+      requireValue(lines, "This older payment has no exact item history. The organiser can reset the whole demo bill.");
       for (const [id, cents] of Object.entries(lines)) undoPaid[id] = (undoPaid[id] || 0) + cents;
     }
     for (const [id, n] of Object.entries(undoPaid)) {
@@ -115,7 +161,7 @@ export function updateBill(room: BillRoom, actor: string, cmd: BillAction, revis
     }
     for (const g of b.groups) if (g.paidBy === actor) delete g.paidBy;
     b.payments = b.payments.filter(p => p.actor !== actor);
-    delete b.picks[actor]; delete b.undo;
+    delete b.picks[actor]; clearGroupHistory(b);
     return;
   }
   if (cmd.action === "applyPattern") {
@@ -148,12 +194,16 @@ export function updateBill(room: BillRoom, actor: string, cmd: BillAction, revis
   }
   if (cmd.action === "editLine") {
     requireValue(item && available(item,b) === item.cents, "Release the selections on this line before editing it.");
-    requireValue(typeof cmd.name === "string" && cmd.name.trim() && cmd.name.trim().length <= 100 && Number.isSafeInteger(cmd.cents) && cmd.cents! > 0 && cmd.cents! <= 99999999 && Number.isInteger(cmd.quantity) && cmd.quantity! > 0 && cmd.quantity! <= 9999, "Check the name, quantity and line total.");
+    const fields = receiptLineInput(cmd);
     b.receiptBeforeEdit ??= structuredClone(room.items);
-    item.name = cmd.name.trim(); item.cents = cmd.cents!; item.quantity = cmd.quantity!;
-    delete b.undo;
+    Object.assign(item, fields);
+    clearGroupHistory(b);
     return;
   }
+  // Only extend an uninterrupted history. Never restore snapshots across a
+  // guest selection, payment, or any other intervening room revision.
+  b.undoHistory = b.undo?.revision === revision && b.undo.actor === actor
+    ? [...(b.undoHistory ?? []), b.undo].slice(-49) : [];
   b.undo = { actor, revision: revision + 1, picks: structuredClone(b.picks), groups: structuredClone(b.groups) };
   if (cmd.action === "shareCategory") {
     const lines = room.items.filter(i => i.category === cmd.category);

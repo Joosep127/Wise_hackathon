@@ -40,6 +40,6 @@ export function ItemProgress({ room, item, colors, history }: {
   const percent = (n:number) => (100*n/item.cents).toLocaleString("en",{maximumFractionDigits:2})+"%";
   return <div className="item-progress" aria-label={item.name+" shares"}>
     <span className="share-track" aria-hidden="true">{shares.map((s,i)=><i key={i} data-state={s.state} style={{backgroundColor:s.color,width:(100*s.cents/item.cents)+"%"}}/>)}</span>
-    <span className="share-key">{!shares.length && "0% picked"}{shares.map((s,i)=><span key={i}><i style={{backgroundColor:s.color}}/>{s.name} {percent(s.cents)} {s.state}</span>)}</span>
+    {shares.length>0 && <span className="share-key">{shares.map((s,i)=><span key={i}><i style={{backgroundColor:s.color}}/>{s.name} {percent(s.cents)} {s.state}</span>)}</span>}
   </div>;
 }

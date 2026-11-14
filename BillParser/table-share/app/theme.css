@@ -70,3 +70,24 @@ input, select { min-height: 46px; font-size: 16px; }
   .bill-sheet h2 { padding-right:26px; }
 }
 @media (prefers-reduced-motion:reduce) { button { transition:none; } }
+
+main.shell, .nav { width:min(680px,calc(100% - 32px)); }
+.nav { height:60px; }
+.brand { font-size:20px; letter-spacing:-.8px; min-height:44px; }
+.brandmark { display:block; width:24px; height:24px; flex-shrink:0; }
+.start-bill { padding:32px 0 24px; display:grid; gap:10px; }
+.start-bill h1 { font-family:inherit; font-size:36px; font-weight:750; line-height:1.15; letter-spacing:-1.4px; }
+.start-bill p { color:var(--muted); margin-bottom:12px; }
+.start-bill small { color:var(--muted); font-size:13px; }
+.start-bill .primary,.start-bill .secondary { width:100%; box-shadow:none; border-radius:12px; }
+.start-alternatives { margin-top:6px; }
+.start-alternatives summary { min-height:44px; display:flex; align-items:center; color:var(--muted); cursor:pointer; font-size:14px; }
+.start-alternatives summary::after { content:"＋"; margin-left:auto; }
+.start-alternatives[open] summary::after { content:"−"; }
+.recent-tables { margin:12px 0; }
+.recent-tables h2 { font-size:16px; margin-bottom:8px; }
+.recent-tables .saved { display:block; }
+.recent-tables .saved button { display:flex; align-items:center; width:100%; min-height:64px; gap:12px; border:0; border-bottom:1px solid var(--line); border-radius:0; padding:12px 0; background:white; }
+.recent-tables .saved button strong { text-align:left; flex:1; }
+.recent-tables .saved button>svg { margin:0; flex:none; }
+.page-title { margin-top:24px; font-family:inherit; font-size:30px; font-weight:700; letter-spacing:-1px; }

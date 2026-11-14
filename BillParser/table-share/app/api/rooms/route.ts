@@ -1,4 +1,4 @@
-import { and, eq, gt, sql } from "drizzle-orm";
+import { and, eq, gt, lt, sql } from "drizzle-orm";
 import { combineItems, suggestions, updateBill, type BillAction, type BillRoom, type Pattern } from "../../../lib/bill";
 import { getDb } from "../../../db";
 import { presence, rooms } from "../../../db/schema";
@@ -19,13 +19,13 @@ function reply(body: unknown, status = 200) {
 }
 async function identity(req: Request) {
   const token = req.headers.get("authorization")?.replace(/^Bearer /, "");
-  check(token && /^[a-f0-9]{64}$/.test(token), "Reopen the table to continue.", 401);
+  check(token && /^[a-f0-9]{64}$/.test(token), "Reopen the bill to continue.", 401);
   const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
   return Array.from(new Uint8Array(hash), n => n.toString(16).padStart(2, "0")).join("");
 }
 async function read(id: string) {
   const row = await getDb().select().from(rooms).where(eq(rooms.id, id)).get();
-  check(row, "This table could not be found.", 404);
+  check(row, "This bill could not be found.", 404);
   const room = JSON.parse(row.body) as Room;
   for (const item of room.items) {
     if (item.quantity === undefined) {
@@ -46,11 +46,11 @@ function change(room: Room, actor: string, cmd: Command, revision: number) {
   const member = room.people.find(p => p.id === actor);
   if (cmd.action === "join") {
     if (member) return;
-    check(!room.locked && room.people.length < 50, "This table is closed to new guests.");
+    check(!room.locked && room.people.length < 50, "This bill is closed to new guests.");
     room.people.push({ id: actor, name: label(cmd.name, 32), paid: false });
     return;
   }
-  check(member, "Join this table first.", 403);
+  check(member, "Join this bill first.", 403);
   if (room.board) {
     try { updateBill(room as BillRoom, actor, cmd, revision); }
     catch (err) { throw new InputError(err instanceof Error ? err.message : "Unable to change bill.", 409); }
@@ -81,11 +81,11 @@ function change(room: Room, actor: string, cmd: Command, revision: number) {
   }
   check(room.host === actor, "Only the organiser can change the split rules.", 403);
   if (cmd.action === "lock") {
-    check(cmd.revision === revision, "The table changed. Review the latest totals and try again.", 409);
+    check(cmd.revision === revision, "The bill changed. Review the latest totals and try again.", 409);
     check(!totals(room).incomplete, "Assign every item before checkout.");
     room.locked = true;
   } else if (cmd.action === "category") {
-    check(cmd.revision === revision, "The table changed. Review the category and try again.", 409);
+    check(cmd.revision === revision, "The bill changed. Review the category and try again.", 409);
     check(room.items.some(i => i.category === cmd.category) && typeof cmd.everyone === "boolean", "Choose a category and rule.");
     for (const item of room.items.filter(i => i.category === cmd.category)) {
       item.everyone = cmd.everyone;
@@ -111,7 +111,7 @@ function fail(error: unknown) {
   if (error instanceof InputError) return reply({ error: error.message }, error.status);
   if (error instanceof SyntaxError) return reply({ error: "Invalid request." }, 400);
   console.error("Room request failed", error);
-  return reply({ error: "Could not reach the table. Try again." }, 500);
+  return reply({ error: "Could not reach the bill. Try again." }, 500);
 }
 export async function GET(req: Request) {
   try {
@@ -168,10 +168,11 @@ export async function POST(req: Request) {
     const id = new URL(req.url).searchParams.get("id") || "";
     if (cmd.action === "presence") {
       const { room } = await read(id);
-      check(room.people.some(p => p.id === actor), "Join the table first.", 403);
+      check(room.people.some(p => p.id === actor), "Join the bill first.", 403);
       const db = getDb();
       const now = sql<number>`unixepoch()`;
-      const [, active] = await db.batch([
+      const [, , active] = await db.batch([
+        db.delete(presence).where(and(eq(presence.roomId, id), lt(presence.lastSeen, sql`unixepoch() - 30`))),
         db.insert(presence).values({ roomId: id, personId: actor, lastSeen: now })
           .onConflictDoUpdate({ target: [presence.roomId, presence.personId], set: { lastSeen: now } }),
         db.select({ id: presence.personId }).from(presence)
@@ -182,7 +183,7 @@ export async function POST(req: Request) {
     for (let i = 0; i < 20; i++) {
       const { room, revision } = await read(id);
       if (cmd.action === "deleteTable") {
-        check(room.board && actor === room.host, "Only the organiser can delete the table.", 403);
+        check(room.board && actor === room.host, "Only the organiser can delete the bill.", 403);
         check(cmd.revision === revision, "The bill changed. Review it before deleting.", 409);
         const deleted = await getDb().delete(rooms).where(and(eq(rooms.id, id), eq(rooms.revision, revision))).returning({ id: rooms.id });
         check(deleted.length, "The bill changed. Review it before deleting.", 409);
@@ -195,6 +196,6 @@ export async function POST(req: Request) {
       // Spread out a burst of concurrent phones so they don't all retry the same revision.
       await new Promise(resolve => setTimeout(resolve, 2 + Math.random() * Math.min(45, (i + 1) * 6)));
     }
-    throw new InputError("The table is busy. Try again.", 409);
+    throw new InputError("The bill is busy. Try again.", 409);
   } catch (e) { return fail(e); }
 }

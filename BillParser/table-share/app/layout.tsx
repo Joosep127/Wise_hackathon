@@ -3,11 +3,11 @@ import "./globals.css";
 import "./theme.css";
 
 export const metadata: Metadata = {
-  title: "Table Share · Split a bill",
+  title: "Bill splitter",
   description: "Scan the receipt, share the dishes and settle up together.",
   icons: {
-    icon: "/favicon.svg",
-    shortcut: "/favicon.svg",
+    icon: "/favicon.svg?v=2",
+    shortcut: "/favicon.svg?v=2",
   },
 };
 

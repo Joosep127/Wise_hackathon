@@ -2,16 +2,17 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { GripVertical, MoreHorizontal, Plus, QrCode, Undo2, X } from "lucide-react";
-import { available, sum, type BillRoom, type Pattern, type Selection, type Group } from "../lib/bill";
+import { available, isBillCovered, isItemSettled, sum, type BillRoom, type Pattern, type Selection, type Group } from "../lib/bill";
 import { money, parseCents, type Item, type Room } from "../lib/split";
 import { ActivePeople } from "./active-people";
 import { ItemProgress, paidHistory, seatColor } from "./item-progress";
 import { PaidItems } from "./paid-items";
 import { DragTray, useGroupDrag } from "./group-drag";
 import "./live-bill.css";
+import { GuestLineForm } from "./guest-line-form";
 
 type Action = (cmd: {action:string; [key:string]:unknown}) => Promise<false | {room:Room} | {deleted:true}>;
-type Sheet = "share" | "item" | "group" | "destinations" | "divide" | "checkout" | "edit" | "rename" | "confirm" | "";
+type Sheet = "add" | "share" | "item" | "group" | "destinations" | "divide" | "checkout" | "edit" | "rename" | "confirm" | "";
 type Suggestion = {pattern:Pattern; times:number; match:number};
 const numberText = (n:number) => String(Math.round(n*1000)/1000);
 const key = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), v => v.toString(16).padStart(2,"0")).join("");
@@ -49,8 +50,8 @@ function BillLine({item, mine, left, cap, paid, settled, showPayers, busy, amoun
       onPointerDown={e => { held.current=false; start.current=[e.clientX,e.clientY]; stop(); timer.current=setTimeout(() => { held.current=true; open(); },450); }}
       onPointerMove={e => { if (Math.abs(e.clientY-start.current[1])+Math.abs(e.clientX-start.current[0])>10) stop(); }} onPointerUp={stop} onPointerCancel={stop} onPointerLeave={stop}
       onClick={() => { if(!held.current) open(); held.current=false; }}>
-      <span>{item.name}</span><small>{item.quantity} ordered · {amount(item.cents)} total{item.quantity>1 && item.cents%item.quantity===0 ? " · "+amount(unit)+" each" : ""}</small>
-      <small>{remainder>0?(whole>0?whole+" whole + "+amount(remainder)+" left":numberText(left/unit)+" left · "+amount(left)):whole+" whole left"}{paid>0?" · "+amount(paid)+" paid":""}</small>
+      <span>{item.name}</span><small>{item.quantity} ordered · {amount(item.cents)}</small>
+      {left<item.cents && <small>{remainder>0?numberText(left/unit):whole} left</small>}
     </button>
     <div className="bill-step"><button aria-label={"Remove one "+item.name} disabled={busy || !mine} onClick={() => select(Math.max(0,Math.round(mine-unit)))}>−</button>
       <input aria-label={quantityFor+" quantity of "+item.name} type="number" inputMode="decimal" step="any" min="0" max={numberText(cap/unit)} value={input} disabled={busy||(!mine&&!cap)}
@@ -63,9 +64,10 @@ function BillLine({item, mine, left, cap, paid, settled, showPayers, busy, amoun
   </article>;
 }
 
-export function LiveBill({room,me,id,revision,busy,act:send,token,error}:{
+export function LiveBill({room,me,id,revision,busy:requestBusy,act:send,token,error}:{
   room:BillRoom; me:string; id:string; revision:number; busy:boolean; act:Action; token:string; error:string;
 }) {
+  const busy=requestBusy || room.locked;
   const board=room.board, host=room.host===me, mine=board.picks[me] ?? {};
   const history = useMemo(()=>paidHistory(room),[room]);
   const colors = useMemo(()=>Object.fromEntries(room.people.map((p,index)=>[p.id,seatColor(index,id)])),[room.people,id]);
@@ -73,7 +75,7 @@ export function LiveBill({room,me,id,revision,busy,act:send,token,error}:{
   const act:Action=cmd=>send({generation:board.generation??0,...cmd});
   // A settled row already on screen keeps its slot. On the next visit it lives
   // only under Paid items. Editable reservations never reorder the receipt.
-  const [archivedOnEntry]=useState(()=>new Set(room.items.filter(i=>(board.paid[i.id]||0)>0 && (board.paid[i.id]||0)+(board.picks[room.host]?.[i.id]||0)>=i.cents).map(i=>i.id)));
+  const [archivedOnEntry]=useState(()=>new Set(room.items.filter(i=>isItemSettled(i,room)).map(i=>i.id)));
   const selected=room.items.filter(i=>mine[i.id]);
   const amount=(n:number)=>money(n,room.currency);
   const [sheet,setSheet]=useState<Sheet>("");
@@ -100,6 +102,9 @@ export function LiveBill({room,me,id,revision,busy,act:send,token,error}:{
   const openGroups=board.groups.filter(g=>!g.paidBy);
   const target=openGroups.find(g=>g.id===destination);
   const picking=assigning ? target?.items ?? draft : mine;
+  const foodItems = room.items.filter(item => item.category === "Food");
+  const canSplitFood = room.people.length > 1 && foodItems.length > 0 &&
+    foodItems.every(item => !board.paid[item.id] && !board.groups.some(group => group.items[item.id]));
   const canSelectAll = room.items.some(i => available(i,board) > (assigning && !target ? draft[i.id] || 0 : 0));
   const payer=room.people.find(p=>p.id===room.host)?.name || "the organiser";
   const total=room.items.reduce((n,i)=>n+i.cents,0);
@@ -164,9 +169,9 @@ export function LiveBill({room,me,id,revision,busy,act:send,token,error}:{
   function confirmChange(action:"deleteGroup"|"resetMine"|"resetTable"|"deleteTable",g?:Group){
     if(options.current)options.current.open=false;
     const [title,detail]= action==="deleteGroup"?["Delete "+g!.name+"?",g!.paidBy?"The group will be removed. Its payment will stay in Paid items.":"Its assigned items will be available again. You can undo this group edit."]:
-      action==="resetMine"?["Reset my activity?","Release your selections and reverse your demo payments on this table. Other people’s selections and payments stay as they are."]:
-      action==="resetTable"?["Reset this table?","Restore the receipt and clear everyone’s selections, groups and demo payments. The people and invitation link stay."]:
-      ["Delete this table?","Everyone will lose access to this bill, its payment history and its invitation link. This cannot be undone."];
+      action==="resetMine"?["Reset my activity?","Release your selections and reverse your demo payments on this bill. Other people’s selections and payments stay as they are."]:
+      action==="resetTable"?["Reset this bill?","Restore the receipt and clear everyone’s selections, groups and demo payments. The people and invitation link stay."]:
+      ["Delete this bill?","Everyone will lose access to this bill, its payment history and its invitation link. This cannot be undone."];
     setConfirm({action,title,detail,group:g?.id,revision});setSheet("confirm");
   }
   async function copy(){
@@ -187,36 +192,41 @@ export function LiveBill({room,me,id,revision,busy,act:send,token,error}:{
   const shareCents=mode==="ways" && Math.abs(raw-max)<1 ? max : Math.round(raw);
   const valid=value.trim()!=="" && Number.isFinite(raw) && typed>=0 && (mode!=="ways" || (Number.isInteger(typed)&&typed>=1)) && (mode!=="percent" || typed<=100) && shareCents<=max;
   return <div className="phone-bill">
-    <div className="bill-tools"><details ref={options}><summary>Options <MoreHorizontal size={16}/></summary><div>
+    <div className="bill-heading"><h1>{room.title}</h1><b>{amount(total)}</b></div>
+    <div className="bill-tools"><ActivePeople id={id} token={token} me={me} people={room.people} colors={colors}/>
+    <details ref={options}><summary aria-label="Options"><MoreHorizontal size={20}/></summary><div>
       {host && [...new Set(room.items.map(i=>i.category))].map(category=><button key={category} disabled={busy} onClick={()=>submit({action:"shareCategory",category})}>Split {category.toLowerCase()} among {room.people.length}</button>)}
-      {host && <><button onClick={()=>{setActive(room.items[0].id);setLineName(room.items[0].name);setValue((room.items[0].cents/100).toFixed(2));setUnitCount(String(room.items[0].quantity));setSheet("edit");}}>Edit receipt line</button>
+      {host && <><button disabled={busy} onClick={()=>{setActive(room.items[0].id);setLineName(room.items[0].name);setValue((room.items[0].cents/100).toFixed(2));setUnitCount(String(room.items[0].quantity));setSheet("edit");}}>Edit receipt line</button>
         <button disabled={busy || board.undo?.actor!==me || board.undo.revision!==revision} onClick={()=>submit({action:"undo"})}>Undo group edit</button>
-        <button disabled={busy} onClick={()=>confirmChange("resetTable")}>Reset table</button>
-        <button className="danger-text" disabled={busy} onClick={()=>confirmChange("deleteTable")}>Delete table</button></>}
+        <button disabled={busy} onClick={()=>confirmChange("resetTable")}>Reset bill</button>
+        <button className="danger-text" disabled={busy} onClick={()=>confirmChange("deleteTable")}>Delete bill</button></>}
       {!host && <button disabled={busy} onClick={()=>confirmChange("resetMine")}>Reset my activity</button>}
     </div></details><button className="copy-bill" onClick={()=>setSheet("share")}><QrCode size={18}/>Share QR</button></div>
-    <div className="bill-heading"><h1>{room.title}</h1><b>{amount(room.items.reduce((n,i)=>n+i.cents,0))}</b></div>
-    <ActivePeople id={id} token={token} me={me} people={room.people} colors={colors}/>
-    <div className="bill-progress"><label htmlFor="bill-covered">Bill covered <b>{amount(covered)} / {amount(total)}</b></label>
-      <progress id="bill-covered" value={covered} max={total}/>
-      <small>{covered===total?"All shares covered":amount(total-covered)+" left"} · Includes the organiser’s share and completed payments</small></div>
+    <div className="bill-progress"><label htmlFor="bill-covered">Covered <b>{amount(covered)} / {amount(total)}</b></label>
+      <progress id="bill-covered" value={covered} max={total}/></div>
+    {room.locked && <p role="status">Bill closed · All shares are covered.</p>}
+    <fieldset className="bill-editing" disabled={room.locked} hidden={room.locked}>
     {host ? <div className="bill-modes" role="group" aria-label="Manage the receipt">
-      <button aria-pressed={assigning} onClick={()=>{setLane("groups");setNotice("");}}>Assign to groups</button>
-      <button aria-pressed={!assigning} onClick={()=>{setLane("mine");setNotice("");}}>My items · already paid</button>
-    </div> : <button type="button" className="group-shortcut" onClick={()=>{groupsSection.current?.focus({preventScroll:true});groupsSection.current?.scrollIntoView({block:"start"});}}>View groups ↓</button>}
-    <section ref={lines} className="receipt-lines"><h2>Bill items</h2>
+      <button aria-pressed={assigning} onClick={()=>{setLane("groups");setNotice("");}}>Groups</button>
+      <button aria-pressed={!assigning} onClick={()=>{setLane("mine");setNotice("");}}>My items</button>
+    </div> : board.groups.length>0 && <button type="button" className="group-shortcut" onClick={()=>{groupsSection.current?.focus({preventScroll:true});groupsSection.current?.scrollIntoView({block:"start"});}}>View groups ↓</button>}
+    <section ref={lines} className="receipt-lines">
       {assigning ? <>
-        <p>Groups pay you back. Choose a group and use + to add what they had, or drag a receipt item by its grip.</p>
-        <div className="group-destination"><label>Assign to<select value={target?.id||""} onChange={e=>{if(e.target.value==="new")newGroup();else focusGroup(e.target.value,false);}}>
-          <option value="">Select items first</option>{openGroups.map(g=><option key={g.id} value={g.id}>{g.name}</option>)}<option value="new">+ New group</option>
+        <div className="group-destination"><label>Assign to<select value={target?.id||""} onChange={e=>focusGroup(e.target.value,false)}>
+          <option value="">Select items first</option>{openGroups.map(g=><option key={g.id} value={g.id}>{g.name}</option>)}
         </select></label><button type="button" className="minor" disabled={busy} onClick={()=>newGroup()}><Plus size={16}/> New group</button></div>
-        <p>{target ? "Editing "+target.name+" · "+amount(sum(target.items)) : "Use + to choose several items, then assign them together or split them equally."}</p>
-      </> : <p>{host?"You already paid the restaurant. Mark only what you had.":"Choose what you had."} Tap or hold an item for a percentage or an equal split.</p>}
-      <div className="batch-actions"><button disabled={busy || !canSelectAll} onClick={()=>batch(true)}>Select all</button><button disabled={busy||!sum(picking)} onClick={()=>batch(false)}>Clear all</button></div>
+        {target && <p>{target.name+" · "+amount(sum(target.items))}</p>}
+      </> : host && <p>Your items are already paid.</p>}
+      <p className="item-hint">Tap an item for percentages or splits.</p>
+      <div className="batch-actions"><button disabled={busy || !canSelectAll} onClick={()=>batch(true)}>Select all</button><button disabled={busy||!sum(picking)} onClick={()=>batch(false)}>Clear all</button>
+        {host && <button className="split-food" disabled={busy || !canSplitFood}
+          title={canSplitFood ? "Split food equally among all "+room.people.length+" people, including you" : "Needs at least two people and food without group assignments or payments"}
+          onClick={async()=>{if(await submit({action:"shareCategory",category:"Food"})){setDraft({});setLane("mine");setNotice("Food split among "+room.people.length+" people.");}}}>Split food among everyone</button>}
+      </div>
       {room.items.map(i=>{
         const own=board.picks[room.host]?.[i.id]||0, paid=board.paid[i.id]||0;
         if(!host && own===i.cents)return null;
-        const settled=paid>0 && (host?paid===i.cents:own+paid>=i.cents);
+        const settled=isItemSettled(i,room);
         if(settled && archivedOnEntry.has(i.id))return null;
         const stock=available(i,board), picked=picking[i.id]||0;
         const left=assigning && !target ? Math.max(0,stock-picked):stock;
@@ -231,19 +241,16 @@ export function LiveBill({room,me,id,revision,busy,act:send,token,error}:{
       })}
       {room.items.every(i=>(board.paid[i.id] || 0) + (board.picks[room.host]?.[i.id] || 0) === i.cents) && <p>All shares are covered.</p>}
     </section>
-    {assigning && !target ? <section><div className="bill-section-title"><h2>Items to assign</h2><b>{amount(sum(draft))}</b></div>
-      {sum(draft)>0 ? <>
+    {assigning && !target && sum(draft)>0 && <section><details className="selection-details"><summary>Selected items <b>{amount(sum(draft))}</b></summary>
         {room.items.filter(i=>draft[i.id]).map(i=><div className="pick-row" key={i.id}><button onClick={()=>openItem(i)}>{i.name}</button><b>{amount(draft[i.id])}</b></div>)}
-        <div className="group-actions"><button disabled={busy} onClick={()=>{setPending({...draft});setSheet("destinations");}}>Assign to a group</button>
+        </details><div className="group-actions"><button disabled={busy} onClick={()=>{setPending({...draft});setSheet("destinations");}}>Assign to a group</button>
           <button disabled={busy} onClick={()=>{setPending({...draft});setDivideNew(openGroups.length<2);setValue("2");setGroupTargets(openGroups.map(g=>g.id));setSheet("divide");}}>Divide equally</button>
           </div>
-      </> : <p>Items you choose here are for groups. Your own share stays separate.</p>}
-    </section> : !assigning && <section><div className="bill-section-title"><h2>{host ? "Your share · already paid" : "Your selection"}</h2><b>{amount(sum(mine))}</b></div>
-      {selected.length===0 && <p>Use + beside an item to add it.</p>}
-      {selected.map(i=><div className="pick-row" key={i.id}><button onClick={()=>openItem(i)}>{i.name}</button><b>{amount(mine[i.id])}</b></div>)}</section>}
+    </section>}
+    {!assigning && selected.length>0 && <section><details className="selection-details"><summary>{host ? "My items · paid" : "My selection"}<b>{amount(sum(mine))}</b></summary>
+      {selected.map(i=><div className="pick-row" key={i.id}><button onClick={()=>openItem(i)}>{i.name}</button><b>{amount(mine[i.id])}</b></div>)}</details></section>}
     {host && notice && <p className="bill-feedback" role="status">{notice}</p>}
-    <section id="payment-groups" ref={groupsSection} tabIndex={-1} aria-label="Groups"><div className="bill-section-title"><h2>Groups</h2>{host && <button disabled={busy || board.undo?.actor!==me || board.undo.revision!==revision} onClick={async()=>{if(await submit({action:"undo"}))setNotice("Group edit undone.");}}><Undo2 size={15}/> Undo</button>}</div>
-      <p>{host?"Give each group the items they owe you for.":"Someone from each group can pay its total to "+payer+"."}</p>
+    {(assigning || board.groups.length>0) && <section id="payment-groups" ref={groupsSection} tabIndex={-1} aria-label="Groups"><div className="bill-section-title"><h2>Groups</h2>{host && <button disabled={busy || board.undo?.actor!==me || board.undo.revision!==revision} onClick={async()=>{if(await submit({action:"undo"}))setNotice("Group edit undone.");}}><Undo2 size={15}/> Undo</button>}</div>
       {host && <button disabled={busy} className={"new-group "+(drag.over==="new"?"over":"")} data-group-drop="new" onClick={()=>newGroup()}><Plus/> New group</button>}
       {board.groups.map(g=><div className={"bill-group "+(drag.over===g.id?"over":"")} key={g.id} data-group-drop={host&&!g.paidBy?g.id:undefined}>
         <div className="bill-section-title"><strong>{g.name}</strong><b>{amount(sum(g.items))}</b></div>
@@ -255,16 +262,19 @@ export function LiveBill({room,me,id,revision,busy,act:send,token,error}:{
             <button onClick={()=>{setGroupId(g.id);setGroupName(g.name);setSheet("rename");}}>Rename</button><button className="danger-text" disabled={busy} onClick={()=>confirmChange("deleteGroup",g)}>Delete group</button></>
           : <button disabled={!sum(g.items)||busy} onClick={()=>pay(g)}>Pay for {g.name}</button>}</div>}
       </div>)}
-      {!host && !board.groups.length && <p>No groups yet. You can choose your own items above.</p>}
-    </section>
+    </section>}
+    {!host && <button className="minor" disabled={busy || room.items.length>=150} onClick={()=>setSheet("add")}><Plus size={16}/> Add line</button>}
+    </fieldset>
     <PaidItems room={room} amount={amount} history={history} progress={progress}/>
-    {!assigning && <section><h2>Reuse a selection</h2>{!last && !patterns.length && <p>Paid selections will appear here.</p>}
+    {!room.locked && !assigning && (last || patterns.length>0) && <section><details className="selection-details"><summary>Reuse a selection</summary>
       {last && <button className="template" disabled={busy} onClick={()=>submit({action:"applyPattern",pattern:last.pattern})}><strong>Last Payment</strong><small>{last.pattern.map(p=>p.name).join(" + ")}</small></button>}
       {patterns.map((s,index)=><button key={index} className="template" disabled={busy} onClick={()=>submit({action:"applyPattern",pattern:s.pattern})}><strong>{s.pattern.map(p=>p.name).join(" + ")}</strong><small>{s.times}× used · {Math.round(s.match*100)}% match</small></button>)}
-    </section>}
-    {!host && <div className="pay-bar">{notice && <small role="status">{notice}</small>}<button className="primary" disabled={!sum(mine)||busy} onClick={()=>pay()}>Pay my share <b>{amount(sum(mine))}</b></button></div>}
+    </details></section>}
+    {host && !room.locked && isBillCovered(room) && <div className="pay-bar"><button className="primary" disabled={busy} onClick={()=>submit({action:"closeTable"})}>Close bill</button></div>}
+    {!host && !room.locked && <div className="pay-bar">{notice && <small role="status">{notice}</small>}<button className="primary" disabled={!sum(mine)||busy} onClick={()=>pay()}>Pay my share <b>{amount(sum(mine))}</b></button></div>}
     <DragTray groups={openGroups} drag={drag}/>
     <dialog ref={dialog} className="bill-sheet" onCancel={e=>{if(sending)e.preventDefault();else setSheet("");}}><button aria-label="Close" className="close" disabled={sending} onClick={()=>setSheet("")}><X/></button>
+      {sheet==="add" && !host && <GuestLineForm busy={busy} currency={room.currency} save={submit}/>}
       {sheet==="share" && <><h2>Join this bill</h2><div className="qr"><QRCodeSVG value={link} size={180} marginSize={2}/></div><input aria-label="Bill link" value={link} readOnly onFocus={e=>e.target.select()}/><button className="primary" onClick={copy}>{copied?"Copied":"Copy link"}</button></>}
       {sheet==="item" && item && <><h2>{item.name}</h2><p>{amount(item.cents)} for {item.quantity} ordered</p>
         <label>Choose by<select value={mode} onChange={e=>{setMode(e.target.value);setValue(e.target.value==="ways"?"3":e.target.value==="percent"?"50":"1");}}><option value="units">Quantity</option><option value="percent">Percentage of line</option><option value="ways">Split equally</option></select></label>
@@ -288,8 +298,8 @@ export function LiveBill({room,me,id,revision,busy,act:send,token,error}:{
         <button className="primary" disabled={busy||sending} onClick={async()=>{setSending(true);await new Promise(r=>setTimeout(r,1800));const ok=await submit({action:"settle",key:checkout.key,group:checkout.group,expected:checkout.items});setSending(false);if(ok)setNotice("Demo payment to "+payer+" · "+amount(sum(checkout.items)));}}>{sending?"Sending…":"Send money · "+amount(sum(checkout.items))}</button></>}
       {sheet==="confirm" && confirm && <><h2>{confirm.title}</h2><p>{confirm.detail}</p><div className="confirm-actions">
         <button className="secondary" disabled={busy} onClick={()=>setSheet("")}>Cancel</button>
-        <button className="confirm-danger" disabled={busy} onClick={async()=>{const result=await submit({action:confirm.action,group:confirm.group,revision:confirm.revision});if(result&&confirm.action!=="deleteTable"){setNotice(confirm.action==="deleteGroup"?"Group deleted.":confirm.action==="resetMine"?"Your activity was reset.":"Table reset.");}}}>
-          {confirm.action==="deleteGroup"?"Delete group":confirm.action==="resetMine"?"Reset my activity":confirm.action==="resetTable"?"Reset table":"Delete table"}</button></div></>}
+        <button className="confirm-danger" disabled={busy} onClick={async()=>{const result=await submit({action:confirm.action,group:confirm.group,revision:confirm.revision});if(result&&confirm.action!=="deleteTable"){setNotice(confirm.action==="deleteGroup"?"Group deleted.":confirm.action==="resetMine"?"Your activity was reset.":"Bill reset.");}}}>
+          {confirm.action==="deleteGroup"?"Delete group":confirm.action==="resetMine"?"Reset my activity":confirm.action==="resetTable"?"Reset bill":"Delete bill"}</button></div></>}
       {error && <p className="error" role="alert">{error}</p>}
     </dialog>
   </div>;

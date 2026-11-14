@@ -37,11 +37,11 @@ export function ActivePeople({ id, token, me, people, colors }: { id: string; to
   }, [id, token]);
   const online = people.filter(p => active?.includes(p.id));
   return <details className="active-people"><summary>
-    <strong><i className={active ? "online" : ""} aria-hidden="true"/>{active ? "Active now · " + online.length : "Connecting to the table…"}</strong>
-    <span className="avatar-stack">{online.slice(0,5).map(p=>{
+    <strong><i className={active ? "online" : ""} aria-hidden="true"/>{active ? online.length + " active" : "Connecting…"}</strong>
+    <span className="avatar-stack">{online.slice(0,3).map(p=>{
       const label=p.name+(p.id===me?" (you)":"");
       return <span className="active-avatar" style={{backgroundColor:colors[p.id],color:"white"}} key={p.id} aria-label={label} title={label}>
         {p.name.trim().split(/\s+/).slice(0,2).map(s=>Array.from(s)[0]).join("").toUpperCase()}</span>;
-    })}{online.length>5 && <span className="active-avatar">+{online.length-5}</span>}</span>
+    })}{online.length>3 && <span className="active-avatar">+{online.length-3}</span>}</span>
     </summary>{online.length>0 && <p>{online.map(p=>p.name+(p.id===me?" (you)":"")).join(", ")}</p>}</details>;
 }
